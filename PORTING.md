@@ -87,7 +87,7 @@ REFERENCE.md turn 事件：
 | `level` | ✅ `tokens / 50000` | ✅ `tokens_boot / 50000` (持久) |
 | Energy tier | ✅ 0-5，2h/tier 衰减，nap end 满血 | ✅ 同（nap 触发改用 BLE 断开 > 5min）|
 | Fed pip | ✅ `(tokens % 50000) / 5000` | ✅ 同 |
-| Velocity ring buffer | ✅ 最近 8 次 approval 响应时延，驱动 mood | ✅ 已写入（直方图渲染待做） |
+| Velocity ring buffer | ✅ 最近 8 次 approval 响应时延，驱动 mood | ✅ 已写入 + SYSTEM 视图直方图 + 联动 mood |
 | approval/denial counter | ✅ + NVS | ✅ + NVS |
 | `napSeconds` 累计 | ✅ + NVS | ⚠️ 没累加 |
 | 设备名 / owner 名 | ✅ + NVS | ✅ + NVS |
@@ -204,11 +204,15 @@ REFERENCE.md turn 事件：
 - 8 槽 velocity ring buffer 记录响应时延
 - 底栏按键提示语随状态切换
 
-### P1：Velocity 直方图（小图表）
-- ✅ ring buffer 已实现（上一步顺带）
-- ❌ 直方图渲染未做
-- USAGE 或 SYSTEM 视图加一行 ASCII bar chart
-- 可驱动 mood：快速响应几次 → spry，>30s 才响应 → drowsy
+### ✅ P1：Velocity 直方图（小图表）— **完成** (本次提交)
+- ring buffer 由 `protocol::sendPermission` 写入（P1-3）
+- `ui.cpp::drawVelocityHistogram` 渲染 8 格柱状图
+  - 位置：SYSTEM 视图底部条带，**有数据**时替换走动小 Clawd；无数据时保留 mascot
+  - 比例尺：0–60s；超出则在柱顶画一个向上的小三角
+  - 标签：每根柱上方显数值（秒），左/右轴标 `oldest`/`newest`
+  - 表头同行附 `avg / min / max / n=N/8` 一行摘要
+- `moodAdjective()` 联动：velocity 平均 `<5s → +1` energy tier、`>30s → -1`
+- `hashState()` 把 `velocity_count` 和 `velocity_idx` 计入，新一次审批立刻触发重画
 
 ### P1：Folder push（自定义角色包）
 - 我们的 sprite 是编译期静态的；要支持运行时自定义需要：
@@ -299,4 +303,5 @@ REFERENCE.md turn 事件：
 | 初版 | `e8a7f06` | PORTING.md 落地 |
 | P0-1 | `e314a9b` | NVS 持久化 |
 | P0-2 | `dd29e52` | LE Secure Connections 加密 + passkey 屏 |
-| P1-3 | (此提交) | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
+| P1-3 | `73fc03e` | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
+| P1-4 | (此提交) | Velocity 直方图（SYSTEM 视图） + mood 联动 |

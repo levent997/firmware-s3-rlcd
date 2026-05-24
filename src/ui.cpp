@@ -121,6 +121,10 @@ uint32_t hashState() {
   mix(&conn, 1);
   uint32_t af = g_state.anim_frame;
   mix(&af, sizeof(af));
+  // Velocity ring buffer state — drives both the histogram and the mood
+  // modifier in moodAdjective().
+  mix(&g_state.velocity_count, 1);
+  mix(&g_state.velocity_idx,   1);
   return h;
 }
 
@@ -294,12 +298,35 @@ void drawWrappedText(int x, int y, int max_w, int line_h, const String &text, in
   }
 }
 
+// Compute the mean response time (seconds) across the populated slots of the
+// velocity ring buffer. Returns 0 if no approvals have been recorded yet.
+static uint16_t velocityMean() {
+  if (g_state.velocity_count == 0) return 0;
+  uint32_t sum = 0;
+  for (int i = 0; i < g_state.velocity_count; i++) {
+    sum += g_state.velocity[i];
+  }
+  return (uint16_t)(sum / g_state.velocity_count);
+}
+
 // Derive a single mood adjective from energy tier (0..5) + state.
+// Velocity from the last few approvals nudges the perceived energy tier:
+// fast (<5s avg) → +1, slow (>30s avg) → -1. Mirrors the M5 reference
+// firmware's stats.velocity-driven mood logic.
 static const char *moodAdjective() {
   int e = (int)g_state.energy_tier;
   bool running = g_state.running > 0;
   bool waiting = g_state.waiting > 0;
   bool offline = !ble_nus::connected();
+
+  if (g_state.velocity_count > 0) {
+    uint16_t avg = velocityMean();
+    if (avg > 0 && avg < 5)        e++;
+    else if (avg > 30)             e--;
+    if (e < 0) e = 0;
+    if (e > 5) e = 5;
+  }
+
   if (offline)                  return "asleep";
   if (g_state.prompt.active)    return "alert";
   if (waiting)                  return "pensive";
@@ -801,6 +828,104 @@ static void drawWalkingMascot(int strip_y, int strip_h) {
   u->drawHLine(8, y + avatar + 1, W - 16);
 }
 
+// --- Velocity histogram ---
+// Renders the response-time ring buffer (last 8 approvals) as a bar chart.
+// Position 0 (leftmost) = oldest, position 7 (rightmost) = newest. Slots not
+// yet filled sit on the LEFT and just show a baseline tick.
+//
+// The buffer is populated by protocol::sendPermission and mirrors the M5
+// reference firmware's stats.velocity[]. Each value is the response time in
+// seconds, capped at uint16_t. We clamp the chart scale to 60s and draw a
+// small overflow caret above any bar that exceeded the cap.
+static void drawVelocityHistogram(int x, int y, int w, int h) {
+  // Header
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(x, y + 10, "Velocity");
+
+  if (g_state.velocity_count == 0) {
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(x + 72, y + 10, "(no approvals recorded yet)");
+    return;
+  }
+
+  // Stats line on the same row as the header.
+  uint16_t vmin = 65535, vmax = 0;
+  uint32_t sum = 0;
+  for (int i = 0; i < g_state.velocity_count; i++) {
+    int idx = (g_state.velocity_idx - 1 - i + 16) % 8;
+    uint16_t v = g_state.velocity[idx];
+    if (v < vmin) vmin = v;
+    if (v > vmax) vmax = v;
+    sum += v;
+  }
+  uint16_t vavg = (uint16_t)(sum / g_state.velocity_count);
+  char info[80];
+  snprintf(info, sizeof(info),
+           "avg %us  min %us  max %us  (n=%u/8, 60s scale)",
+           (unsigned)vavg, (unsigned)vmin, (unsigned)vmax,
+           (unsigned)g_state.velocity_count);
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(x + 72, y + 10, info);
+
+  // Bar region
+  const uint16_t SCALE_MAX = 60;
+  int bar_top = y + 14;
+  int axis_label_h = 8;
+  int bar_h = h - 14 - axis_label_h;
+  if (bar_h < 12) bar_h = 12;
+  int bar_baseline = bar_top + bar_h;
+
+  int n = 8;
+  int slot_w = w / n;
+  int bar_w = slot_w - 3;
+  if (bar_w < 6) bar_w = 6;
+
+  int slots_empty = 8 - g_state.velocity_count;
+  for (int i = 0; i < n; i++) {
+    int bx = x + i * slot_w + (slot_w - bar_w) / 2;
+    if (i < slots_empty) {
+      // Empty placeholder — small tick on the baseline.
+      u->drawHLine(bx, bar_baseline, bar_w);
+      continue;
+    }
+    int k = 7 - i;  // 0 = newest (rightmost)
+    int idx = (g_state.velocity_idx - 1 - k + 16) % 8;
+    uint16_t v = g_state.velocity[idx];
+    uint16_t capped = v > SCALE_MAX ? SCALE_MAX : v;
+    int bh = (int)((uint32_t)capped * bar_h / SCALE_MAX);
+    if (bh < 1) bh = 1;
+    u->drawBox(bx, bar_baseline - bh, bar_w, bh);
+
+    // Numeric label above the bar if there's room.
+    int label_y = bar_baseline - bh - 1;
+    if (label_y - bar_top >= 8) {
+      char b[6];
+      snprintf(b, sizeof(b), "%u", (unsigned)v);
+      u->setFont(u8g2_font_5x7_tf);
+      int tw = u->getStrWidth(b);
+      u->drawStr(bx + (bar_w - tw) / 2, label_y, b);
+    }
+
+    // Overflow caret if the value exceeded the chart scale.
+    if (v > SCALE_MAX) {
+      int cx = bx + bar_w / 2;
+      u->drawTriangle(cx - 3, bar_top + 4,
+                      cx + 3, bar_top + 4,
+                      cx,     bar_top);
+    }
+  }
+
+  // Baseline line beneath the bars.
+  u->drawHLine(x, bar_baseline + 1, w);
+
+  // Axis labels.
+  u->setFont(u8g2_font_5x7_tf);
+  u->drawStr(x, bar_baseline + 8, "oldest");
+  const char *nw = "newest";
+  int tw = u->getStrWidth(nw);
+  u->drawStr(x + w - tw, bar_baseline + 8, nw);
+}
+
 // --- System view ---
 // Layout: title strip, two-column info rows with memory bars, footer.
 void drawSystemView() {
@@ -908,12 +1033,18 @@ void drawSystemView() {
     memBar("PSRAM", 0, 0);
   }
 
-  // ---- Walking mascot strip ----
-  // Below memory section, above the firmware tag + bottom bar.
-  int mascot_strip_top = my + 4;
-  int mascot_strip_h   = H - BOT_H - 14 - mascot_strip_top;
-  if (mascot_strip_h > 30) {
-    drawWalkingMascot(mascot_strip_top, mascot_strip_h);
+  // ---- Bottom strip: velocity histogram OR walking mascot ----
+  // Below memory section, above the firmware tag + bottom bar. When we have
+  // at least one recorded approval, the histogram takes priority because
+  // diagnostic data > decoration; otherwise we show the walking mascot.
+  int strip_top = my + 4;
+  int strip_h   = H - BOT_H - 14 - strip_top;
+  if (strip_h > 30) {
+    if (g_state.velocity_count > 0) {
+      drawVelocityHistogram(12, strip_top, W - 24, strip_h);
+    } else {
+      drawWalkingMascot(strip_top, strip_h);
+    }
   }
 
   // Build / firmware tag in bottom-left area above bottom bar.
