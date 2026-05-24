@@ -121,7 +121,7 @@ REFERENCE.md turn 事件：
 |---|---|---|
 | Pet（主屏 + 角色 + HUD）| ✅ | ✅ MAIN 视图 |
 | Info（多页 stats 含 velocity 直方图）| ✅ 3 页 | ⚠️ 部分内容散在 USAGE / SYSTEM，缺直方图 |
-| Clock | ✅ 大数字时钟独立屏 | ❌ 仅顶栏小时钟 |
+| Clock | ✅ 大数字时钟独立屏 | ✅ 第 4 视图 logisoso50 巨字 + 日期 + 同步源标识 |
 | Approval（待审批专用屏 + 倒计时）| ✅ | ✅ `drawApprovalView()` 全屏接管 |
 | Menu（长按 A）| ✅ | ❌ |
 | Settings | ✅ | ❌ |
@@ -139,7 +139,7 @@ REFERENCE.md turn 事件：
 | 按键 | A、B、电源键 3 个 | KEY、BOOT 2 个 + 电源 PMIC |
 | IMU | ✅ MPU6886（摇晃 → dizzy，翻面 → nap）| ❌ 无 |
 | LED | ✅ 红色指示灯 | ❌ |
-| 蜂鸣器 | ✅ 内置 piezo | ❌（有 ES8311 + 扬声器但未驱动）|
+| 蜂鸣器 / 喇叭 | ✅ 内置 piezo | ✅ ES8311 + I2S 已驱动，approve→ding / deny→buzz / error→buzz |
 | 麦克风 | ❌ | ✅ 双麦阵列（未用）|
 | 温湿度 | ❌ | ✅ SHTC3 |
 | 实时时钟 | ✅ AXP192 内置 | ✅ PCF85063 已驱动：BLE time sync → BCD 写盘；启动回读种子 g_state |
@@ -262,10 +262,14 @@ REFERENCE.md turn 事件：
 - 用按键导航：BOOT 切项，KEY 确认
 - 参考代码：`src/main.cpp:322-355 drawMenu()`
 
-### P3：音频反馈
-- ES8311 codec 已经在板，I2S 引脚已在硬件
-- approval 来时播 ding，error 来时播 buzz
-- 涉及 `i2s_driver_install` + 一小段 PCM 数据嵌入 PROGMEM
+### ✅ P3：音频反馈 — **完成** (本次提交)
+- 新模块 `src/audio.{h,cpp}` 驱动 ES8311 @ I2C 0x18 + I2S TX
+- 24 条 ES8311 寄存器初始化序列（reset → MCLK 源 → 16-bit slave → DAC power → unmute → -32dB）
+- IDF 4.x legacy `driver/i2s.h` API（arduino-esp32 3.x 还没带 IDF 5 的 `i2s_std.h`）
+- 16 kHz mono / 16-bit，PCM 由 sin+expf 现场合成（不嵌 wav，省 flash）
+- 触发点：approve→ding(880Hz,150ms) / deny→buzz(220Hz,250ms) / msg 从无 error 跳到 error→buzz（边沿触发避免重复）
+- 开机 chirp(1320Hz,80ms) 作为音频通路自检
+- **首次烧入待验证**：I2C 探测和寄存器写入都成功（日志 `[audio] ES8311 detected` / `[audio] ready`），实际有无声音需用户耳测
 
 ### P3：演示视频 / Demo 文档
 - 录 10 秒视频展示三视图 + 配对流程
@@ -308,8 +312,9 @@ REFERENCE.md turn 事件：
 | NVS 持久化 | 100% |
 | Folder push（自定义角色包）| 100% |
 | 菜单 / 设置 / 重置 UI | 0% |
-| Clock 独立屏 | 0%（顶栏小时钟已驱动） |
+| Clock 独立屏 | 100% |
 | RTC 写入 (PCF85063) | 100% |
+| 音频反馈 (ES8311) | ~95%（init OK，实机听感待用户确认）|
 | 演示模式（fake heartbeat）| 100% |
 
 **两条 P0 通路（加密 + NVS）都已打通**，本机现在**功能等价**于官方固件可以日用。
@@ -331,3 +336,5 @@ REFERENCE.md turn 事件：
 | P1-8a | `167f348` | LittleFS 分区 + char_* 状态机骨架 (stub) |
 | P1-8b | `64c417c` | 实际 LittleFS 写盘 + 路径校验 |
 | P1-8c | `4aa36fe` | AnimatedGIF 运行时解码 -> sprite override |
+| P3-9  | `7371938` | Clock 独立屏（第 4 视图，logisoso50 巨字）|
+| P3-10 | `6d3485c` | ES8311 + I2S 音频反馈（ding/buzz/chirp）|
