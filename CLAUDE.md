@@ -66,17 +66,22 @@ firmware-s3-rlcd/
     protocol.{h,cpp}         JSON parsing, ack/permission, ASCII sanitiser,
                              5h rolling token sampler, time-sync dispatch
     state.h                  BuddyState - single shared snapshot
-    sensors.{h,cpp}          Battery ADC + SHTC3 temp/humidity
+    sensors.{h,cpp}          Battery ADC + SHTC3 temp/humidity + charging heuristic
     rtc.{h,cpp}              PCF85063 driver (BCD, local wall-clock store)
-    persist.{h,cpp}          NVS persistence (tokens, names, counters)
+    imu.{h,cpp}              QMI8658C 6-axis accel driver (DNP on test board)
+    audio.{h,cpp}            ES8311 codec + legacy I2S TX, sin/expf tone synth
+    persist.{h,cpp}          NVS persistence (tokens, names, sound, counters)
     xfer.{h,cpp}             Folder-push state machine writing to LittleFS
     pack.{h,cpp}             Runtime GIF decode -> PSRAM sprite overrides
     demo.{h,cpp}             Fake-heartbeat rotator (SYSTEM long-press)
+    menu.{h,cpp}             Settings menu (USAGE long-press), 6 items,
+                             two-stage confirm for destructive ones
     buttons.{h,cpp}          KEY/BOOT debouncing, short/long press
-    ui.{h,cpp}               U8g2 dashboard: MAIN, USAGE, SYSTEM +
-                             approval overlay, history overlay, passkey
+    ui.{h,cpp}               U8g2 dashboard: MAIN, USAGE, SYSTEM, CLOCK +
+                             approval overlay, history overlay, menu,
+                             confirm screen, passkey display
     st7305_u8g2.{h,cpp}      ST7305 <-> U8g2 backend (lifted from Waveshare)
-    sprites.h                Auto-generated 128x128 1bpp built-in frames
+    sprites.h                Auto-generated 128x128 1bpp built-in frames (16 sets)
   tools/
     gif_to_sprites.py        Re-generate sprites.h from clawd-on-desk gifs
   flash.bat, monitor.bat     Windows convenience scripts
@@ -94,22 +99,41 @@ firmware-s3-rlcd/
 
 ## View State Machine
 
-Three views, cycled by the buttons:
+Four views, cycled by the buttons (KEY short = next, BOOT short = prev):
 
 | View    | Purpose                                                        |
 |---------|----------------------------------------------------------------|
-| MAIN    | Sprite + mood/energy + live KPIs + recent transcript           |
-| USAGE   | Plan-usage progress bars (5h, today, weekly all, weekly Sonnet) |
-| SYSTEM  | Hardware diagnostics + memory bars + walking mascot strip      |
+| MAIN    | Sprite + mood/energy/fed/level + live KPIs + recent transcript |
+| USAGE   | Plan-usage progress bars (5h current; weekly = n/a per protocol) |
+| SYSTEM  | Diagnostics rows + memory bars + velocity histogram OR walking mascot |
+| CLOCK   | Big logisoso50 HH:MM + blinking colon + date + tz/sync source  |
 
-Buttons:
-- Active prompt: `KEY` short = approve, `BOOT` short = deny.
-- MAIN view (no prompt): long-press either = open transcript history overlay.
-- SYSTEM view (no prompt): long-press either = toggle demo mode (jumps to MAIN).
-- Otherwise: `KEY` short/long = next view, `BOOT` short/long = prev view.
-- History overlay open: any press closes it.
+Long-press semantics are view-dependent because all four button events
+have to multiplex through two physical keys:
+
+| Context                | KEY short | BOOT short | KEY long          | BOOT long         |
+|------------------------|-----------|------------|-------------------|-------------------|
+| MAIN (no prompt)       | next view | prev view  | open history overlay | open history overlay |
+| USAGE (no prompt)      | next view | prev view  | **open settings menu** | open settings menu |
+| SYSTEM (no prompt)     | next view | prev view  | toggle demo mode (-> MAIN) | toggle demo mode |
+| CLOCK (no prompt)      | next view | prev view  | next view         | prev view         |
+| Active prompt (any view) | APPROVE  | DENY       | open history (escape) | open history     |
+| Settings menu open     | next item | prev item  | activate / confirm | back / cancel    |
+| Menu confirm screen    | (no nav)  | (no nav)   | EXECUTE destructive | cancel            |
+| History overlay open   | close     | close      | close             | close             |
+| Passkey display        | (locked)  | (locked)   | (locked)          | (locked)          |
 
 The third physical button is hardware power-only and not software-readable.
+
+## Render Priority (ui::render switch)
+
+When multiple overlays could draw, this is the precedence chain (highest wins):
+
+1. **Passkey screen** (`g_state.passkey_displaying`) — during BLE pairing.
+2. **Settings menu** (`g_state.menu_open`) — possibly with confirm-screen sub-state.
+3. **History overlay** (`g_state.history_open`) — 8-row transcript.
+4. **Active prompt** (`g_state.prompt.active` on MAIN view) — full-screen approval.
+5. Regular view (MAIN / USAGE / SYSTEM / CLOCK).
 
 ## Wire Protocol Coverage
 
@@ -166,15 +190,29 @@ recent pushed pack is auto-loaded on boot. Same filename -> SpriteId map as
 - `partitions_lfs.csv` MUST be ASCII (no em-dash, smart quotes, CJK). The
   PlatformIO partition parser reads the file with the system codec (GBK on
   Windows-CN) and chokes on UTF-8 multibyte sequences during link.
+- **Audio I2S `DSDIN` (ESP32 → codec for playback) is GPIO 8, NOT GPIO 10.**
+  GPIO 10 is `ASDOUT` (codec → ESP32, mic input). Writing PCM to GPIO 10
+  produces silence. The Waveshare datasheet labels them from the codec's
+  perspective; CLAUDE.md naming was ambiguous in an earlier revision and
+  the audio module shipped silent for a flash before this got noticed.
+- **Audio is muted when `g_state.sound_on = false`.** Boot chirp respects
+  this too because `persist::load()` runs before `audio::begin()` in setup().
+- **persist::load() must run before audio::begin()** so the loaded sound
+  setting takes effect on the boot chirp. Don't reorder them.
 - U8g2 fonts used are **Latin-1 only**. Incoming non-ASCII bytes are replaced
   with space (not '?') so the line stays readable; see `protocol::asciiOnly`.
   Switching to a CJK-capable font (e.g. `u8g2_font_unifont_t_chinese*`) would
   cost ~150 KB flash; skip unless asked.
+- **Never hardcode x for strings adjacent to variable-width fonts**
+  (helvB12/14/18, logisoso24/50). Always `getStrWidth(first) + gap`. Hit
+  this overlap bug three separate times before learning.
 - ESP32-S3 USB-Serial/JTAG → `pio device monitor` opens the same COM as the
   firmware's `Serial`. Upload requires monitor closed (port lock).
 - `BOARD_HAS_PSRAM` + `board_build.arduino.memory_type = qio_opi` are **required**
   in `platformio.ini` to enable the 8 MB octal PSRAM on the N16R8 variant.
   The base `esp32-s3-devkitc-1` board JSON does not enable PSRAM by itself.
+  Same goes for `board_build.flash_size = 16MB` + `board_upload.flash_size = 16MB`
+  -- the base JSON pretends it's an 8 MB chip.
 - `getEfuseMac()` returns bytes in reverse order; the broadcast name uses the
   *low* two bytes which correspond to the *first* two MAC bytes (the user's
   device shows `Claude-E658`, not `Claude-7050`, even though USB MAC ends
@@ -184,6 +222,21 @@ recent pushed pack is auto-loaded on boot. Same filename -> SpriteId map as
 - BLE TX sends are MTU-fragmented in `ble_nus::sendLine`. Desktop reassembles
   on `\n`; **never** call `sendLine` from a tight loop without a delay or
   the radio queue can fill.
+- **QMI8658C IMU is DNP** on the test board variant. I2C scan finds
+  `{0x18 ES8311, 0x40 touch, 0x51 RTC, 0x70 SHTC3}` -- no IMU at any
+  address. The driver gracefully no-ops and the BLE-disconnect-5min
+  heuristic continues to drive nap. Swap to a populated board variant and
+  the driver activates without code change.
+- **Arduino-ESP32 3.x ships IDF 4.x I2S API only** (`driver/i2s.h`), NOT
+  the IDF 5.x `driver/i2s_std.h`. First cut of audio.cpp included the
+  latter and wouldn't compile. Stay on legacy.
+- **Token counter cold-start over-count**: `updateTokenWindows()` uses
+  `UINT32_MAX` as sentinel for "never seen a heartbeat" specifically so
+  the first heartbeat after firmware boot doesn't add the desktop's full
+  cumulative count to `tokens_boot`. Same for desktop-restart detection
+  (re-anchor without backfill). Don't change this back to 0-init.
+- **Rate KPI divisor**: must be `min(uptime_minutes, 60)` not hardcoded
+  60. Cold-boot rate would otherwise underestimate by up to 60x.
 
 ## High-Risk Areas
 
@@ -201,13 +254,43 @@ recent pushed pack is auto-loaded on boot. Same filename -> SpriteId map as
 ## Testing
 
 There is no host-side test rig. Manual verification flow:
-1. `pio run` — must compile clean.
+1. `pio run` — must compile clean (RAM ~12%, flash ~28% of 4 MB app slot).
 2. `flash.bat` — must upload with `Hash of data verified.`
-3. `monitor.bat` — `Advertising as Claude-XXXX` should appear within ~1 s of
-   reset, then `[hb]` lines every 5 s, then `[ble] connected` after pairing.
-4. Walk through all 3 views with KEY/BOOT.
+3. `monitor.bat` — within ~1 s of reset the log should show, in order:
+   ```
+   [persist] loaded: ...
+   [sensors] SHTC3 OK
+   [rtc] PCF85063 ready (...)
+   [imu] I2C scan: ... [imu] QMI8658 not on bus (DNP)
+   [xfer] LittleFS mounted: total=12451840 ...
+   [pack] ... (built-in sprites in use)  | OR auto-loads pushed pack
+   [audio] ES8311 detected / [audio] ready
+   Advertising as Claude-XXXX
+   ```
+   Then `[hb]` lines every 5 s, then `[ble] connected` and `[ble] auth OK,
+   link encrypted` after pairing.
+4. Walk through all 4 views with KEY/BOOT (MAIN → USAGE → SYSTEM → CLOCK).
 5. Watch the showcase carousel on MAIN while idle to confirm each sprite
    renders without artifacts.
+6. Long-press MAIN -> history overlay shows; any press dismisses.
+7. Long-press USAGE -> settings menu; navigate with KEY/BOOT short.
+   Sound toggle should immediately mute / unmute subsequent dings.
+   Reboot from menu should land you back at boot log within ~2 s.
+8. Long-press SYSTEM -> demo mode kicks in (DEMO chip in top bar, scenes
+   rotate every 7 s). Long-press SYSTEM again to exit.
+9. If a real desktop is connected and you trigger an approval, KEY plays
+   ding + sends `decision:once`, BOOT plays buzz + sends `decision:deny`.
+
+## Heuristic Smoke Tests
+
+After any non-trivial change, also verify:
+
+- `cmd:unpair` from desktop wipes BLE bonds AND NVS (persisted tokens etc).
+- Reboot survives: tokens_boot, level, approvals, denies, turns, names,
+  sound_on, and the RTC clock should all be restored.
+- Partition swap survives NVS but reformats LittleFS (intentional).
+- Push a folder pack -> see `[pack] decoded /<name>/idle.gif -> slot 0`
+  and the MAIN sprite changes within a few seconds.
 
 ## Out of Scope
 
