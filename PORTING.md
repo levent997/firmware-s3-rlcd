@@ -127,7 +127,7 @@ REFERENCE.md turn 事件：
 | Settings | ✅ | ❌ |
 | Reset / Factory Reset | ✅ | ⚠️ `cmd:unpair` 通过 BLE 触发，无 UI 入口 |
 | Passkey | ✅ | ✅ `drawPasskeyScreen()` |
-| 演示模式 | ✅ 长按某键进入 | ⚠️ 仅 idle 时自动轮播 sprite |
+| 演示模式 | ✅ 长按某键进入 | ✅ SYSTEM 视图长按进入，7 场景轮播 + 顶栏 DEMO 角标 |
 
 ---
 
@@ -236,11 +236,18 @@ REFERENCE.md turn 事件：
 - 任意按键关闭 history overlay
 - 主屏底栏提示语在 MAIN 视图加 `long-press = history`
 
-### P2：演示模式（fake heartbeat）
-- 官方 `data.h:130-170` 有 `_FAKES[]` 数组循环假数据
-- 不连 BLE 时手动按组合键进入演示，方便测 UI 不需要真 Claude
-- 我们的 idle showcase 只切 sprite，没切心跳字段 → 数字静止
-- 演示模式让 `tokens` / `running` / `prompt` 也动起来
+### ✅ P2：演示模式（fake heartbeat）— **完成** (本次提交)
+- 新模块 `src/demo.{h,cpp}` 含 7 个场景的 `SCENES[]` 数组
+  - idle / 单 session / 等待审批 / 3 session juggling / compaction / error / done
+  - 每场景驻留 ~7 s，覆盖了 `moodToSprite()` 的所有分支
+  - tokens 累加进一个独立 counter，让 KPI 数字动起来
+- 触发：SYSTEM 视图长按 KEY 或 BOOT 切换；进入时自动跳到 MAIN 看演示
+- 自动退出：真实 BLE 连接到来时，`demo::tick` 把 `demo_mode` 自动清掉
+- UI 显式标识演示：
+  - 顶栏在名字右侧出一个"DEMO"反相椭圆角标
+  - 底栏右下角的来源标签从 `BLE: ...` 换成 `DEMO heartbeat`
+  - 底栏 SYSTEM 视图左下角提示 `long-press = demo mode / exit demo`
+- 帮手函数 `linkActive()` = `BLE.connected() || demo_mode`，sprite/mood 都以它为准
 
 ### P3：菜单系统（长按 KEY 进入）
 - 设置项：声音开关 / WiFi 开关 / 时钟模式 / 重置统计 / 工厂复位
@@ -294,7 +301,7 @@ REFERENCE.md turn 事件：
 | Folder push（自定义角色包）| 0% |
 | 菜单 / 设置 / 重置 UI | 0% |
 | Clock 独立屏 + RTC 写入 | 0% |
-| 演示模式（fake heartbeat）| 部分（仅 sprite 轮播）|
+| 演示模式（fake heartbeat）| 100% |
 
 **两条 P0 通路（加密 + NVS）都已打通**，本机现在**功能等价**于官方固件可以日用。
 剩余 P1/P2/P3 都是体验/装饰类增量，按需补。
@@ -309,3 +316,4 @@ REFERENCE.md turn 事件：
 | P1-3 | `73fc03e` | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
 | P1-4 | `c7040d7` | Velocity 直方图（SYSTEM 视图） + mood 联动 |
 | P2-5 | `b6fbf3a` | entries 缓冲 3→8 + 长按 history overlay |
+| P2-6 | (此提交) | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |

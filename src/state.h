@@ -53,6 +53,7 @@ struct BuddyState {
   // UI
   uint8_t view = 0;                // 0=main, 1=usage, 2=system
   bool history_open = false;       // long-press on MAIN opens the 8-row transcript overlay
+  bool demo_mode = false;          // long-press on SYSTEM rotates fake heartbeats for showcase
   uint32_t anim_frame = 0;
 
   // Derived "tamagotchi" stats — modelled on the M5StickC reference

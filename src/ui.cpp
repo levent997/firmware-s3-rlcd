@@ -13,12 +13,20 @@ constexpr int H = 300;
 constexpr int TOP_H = 22;
 constexpr int BOT_H = 18;
 
+// "Connected enough to drive animations" — true on real BLE link OR in demo
+// mode. Used by mood/sprite logic so the showcase actually plays in demo.
+// The top bar's BT indicator and bottom bar's "BLE: ..." string still use
+// ble_nus::connected() directly so the real link state is never hidden.
+static inline bool linkActive() {
+  return ble_nus::connected() || g_state.demo_mode;
+}
+
 // Forward decls for helpers defined further down.
 static void drawProgressBar(int x, int y, int w, int h, int pct);
 
 // Map state to sprite ID.
 SpriteId moodToSprite() {
-  if (!ble_nus::connected()) return SPR_SLEEPING;
+  if (!linkActive()) return SPR_SLEEPING;
   if (g_state.prompt.active)  return SPR_NOTIFICATION;
   if (g_state.msg.length()) {
     String m = g_state.msg; m.toLowerCase();
@@ -65,7 +73,7 @@ SpriteId showcaseSprite() {
 }
 
 bool inShowcase() {
-  if (!ble_nus::connected()) return false;
+  if (!linkActive()) return false;
   if (g_state.prompt.active) return false;
   if (g_state.running > 0 || g_state.waiting > 0) return false;
   if (g_state.total > 0 && g_state.msg.length()) return false; // recent activity
@@ -121,6 +129,8 @@ uint32_t hashState() {
   mix(&conn, 1);
   uint8_t hopen = g_state.history_open ? 1 : 0;
   mix(&hopen, 1);
+  uint8_t dmode = g_state.demo_mode ? 1 : 0;
+  mix(&dmode, 1);
   uint32_t af = g_state.anim_frame;
   mix(&af, sizeof(af));
   // Velocity ring buffer state — drives both the histogram and the mood
@@ -152,6 +162,25 @@ void drawTopBar() {
 
   u->setFont(u8g2_font_7x13B_tf);
   u->drawStr(6, 15, g_state.name.c_str());
+
+  // Demo-mode chip immediately right of the name. The top bar is drawn with
+  // the bar itself as ink (color 1) and text as cleared pixels (color 0), so
+  // an attention chip needs the inverse: punch a blank pill into the bar and
+  // draw the "DEMO" glyphs in ink inside it. Reads as a small inset label.
+  if (g_state.demo_mode) {
+    int name_w = u->getStrWidth(g_state.name.c_str());
+    int cx = 6 + name_w + 6;
+    const char *demo = "DEMO";
+    u->setFont(u8g2_font_6x10_tf);
+    int cw = u->getStrWidth(demo) + 6;
+    u->setDrawColor(0);                 // erase a pill into the ink bar
+    u->drawRBox(cx, 4, cw, 14, 2);
+    u->setDrawColor(1);                 // outline + ink text inside
+    u->drawRFrame(cx, 4, cw, 14, 2);
+    u->drawStr(cx + 3, 14, demo);
+    u->setDrawColor(0);                 // restore for the rest of the top bar
+    u->setFont(u8g2_font_7x13B_tf);
+  }
 
   // Compose right-side stats from rightmost first.
   int x = W - 6;
@@ -273,6 +302,11 @@ void drawBottomBar() {
       snprintf(left, sizeof(left),
                "[KEY] next   [BOOT] prev   long-press = history   view: %s (%u/3)",
                title, (unsigned)(g_state.view + 1));
+    } else if (g_state.view == 2) {
+      snprintf(left, sizeof(left),
+               "[KEY] next   [BOOT] prev   long-press = %s   view: %s (%u/3)",
+               g_state.demo_mode ? "exit demo" : "demo mode",
+               title, (unsigned)(g_state.view + 1));
     } else {
       snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
                title, (unsigned)(g_state.view + 1));
@@ -280,7 +314,13 @@ void drawBottomBar() {
   }
   u->drawStr(6, H - 5, left);
 
-  const char *r = ble_nus::connected() ? "BLE: connected" : "BLE: advertising";
+  // Right-aligned source-of-truth label. In demo mode it always reads
+  // "DEMO heartbeat" regardless of BLE state — there's no chance of mistaking
+  // the rotating scenes for live data.
+  const char *r;
+  if (g_state.demo_mode)              r = "DEMO heartbeat";
+  else if (ble_nus::connected())      r = "BLE: connected";
+  else                                r = "BLE: advertising";
   int rw = u->getStrWidth(r);
   u->drawStr(W - rw - 6, H - 5, r);
 }
@@ -325,7 +365,7 @@ static const char *moodAdjective() {
   int e = (int)g_state.energy_tier;
   bool running = g_state.running > 0;
   bool waiting = g_state.waiting > 0;
-  bool offline = !ble_nus::connected();
+  bool offline = !linkActive();
 
   if (g_state.velocity_count > 0) {
     uint16_t avg = velocityMean();
@@ -527,7 +567,7 @@ void drawMainView() {
     snprintf(buf, sizeof(buf), "%d session%s for %s",
              g_state.running, g_state.running == 1 ? "" : "s", d);
     u->drawStr(rx + 44, ry, buf);
-  } else if (!ble_nus::connected()) {
+  } else if (!linkActive()) {
     u->drawStr(rx + 44, ry, g_state.napping ? "offline, napping (energy refilling)" : "offline, will nap in <5 min");
   } else {
     u->drawStr(rx + 44, ry, g_state.total > 0 ? "idle (sessions parked)" : "all clear");
@@ -601,7 +641,7 @@ void drawMainView() {
       u->drawStr(8, ey + 14, s.c_str());
     } else {
       u->setFont(u8g2_font_6x10_tf);
-      u->drawStr(8, ey + 14, ble_nus::connected()
+      u->drawStr(8, ey + 14, linkActive()
                               ? "(no transcript yet — start a Claude session)"
                               : "(offline)");
     }
@@ -1063,7 +1103,9 @@ void drawSystemView() {
 
 void drawOfflineHint() {
   // Overlay when not connected — show a subtle hint band over main view.
-  if (ble_nus::connected()) return;
+  // Suppressed in demo mode (the user is watching the showcase, not waiting
+  // on a real link).
+  if (linkActive()) return;
   const int box_h = 18;
   int y = H - BOT_H - box_h - 2;
   u->setDrawColor(1);

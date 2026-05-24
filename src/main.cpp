@@ -7,6 +7,7 @@
 #include "ui.h"
 #include "sensors.h"
 #include "persist.h"
+#include "demo.h"
 
 BuddyState g_state;
 
@@ -44,6 +45,7 @@ void setup() {
 void loop() {
   ble_nus::loop();
   sensors::loop();
+  demo::tick();
 
   // Connection liveness: 30s without heartbeat = treat as dead screen.
   // (BLE may still be linked, but we hide stale stats.)
@@ -80,16 +82,29 @@ void loop() {
     } else if (active_prompt && ev == buttons::BOOT_SHORT) {
       Serial.printf("[approval] %s DENY\n", g_state.prompt.id.c_str());
       protocol::sendPermission(g_state.prompt.id, false);
-    } else if ((ev == buttons::KEY_LONG || ev == buttons::BOOT_LONG)
-               && (g_state.view == 0 || active_prompt)) {
-      // Long-press on MAIN (or while a prompt is up) opens the history
-      // overlay. From any other view the long-press still cycles views below.
-      g_state.history_open = true;
-      Serial.println("[ui] history opened");
-    } else if (ev == buttons::KEY_SHORT || ev == buttons::KEY_LONG) {
+    } else if (ev == buttons::KEY_LONG || ev == buttons::BOOT_LONG) {
+      // Long-press semantics depend on what the user is looking at:
+      //   * active prompt or MAIN view  -> open transcript history overlay
+      //   * SYSTEM view                  -> toggle demo mode (and jump to MAIN
+      //                                     so the user sees the showcase)
+      //   * USAGE view                   -> same as short (cycle direction)
+      if (active_prompt || g_state.view == 0) {
+        g_state.history_open = true;
+        Serial.println("[ui] history opened");
+      } else if (g_state.view == 2) {
+        demo::toggle();
+        if (g_state.demo_mode) g_state.view = 0;   // jump to MAIN to see it
+      } else if (ev == buttons::KEY_LONG) {
+        g_state.view = (g_state.view + 1) % 3;
+        Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
+      } else {
+        g_state.view = (g_state.view + 2) % 3;
+        Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
+      }
+    } else if (ev == buttons::KEY_SHORT) {
       g_state.view = (g_state.view + 1) % 3;
       Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
-    } else if (ev == buttons::BOOT_SHORT || ev == buttons::BOOT_LONG) {
+    } else if (ev == buttons::BOOT_SHORT) {
       g_state.view = (g_state.view + 2) % 3;
       Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
     }
