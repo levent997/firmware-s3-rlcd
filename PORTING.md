@@ -316,4 +316,4 @@ REFERENCE.md turn 事件：
 | P1-3 | `73fc03e` | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
 | P1-4 | `c7040d7` | Velocity 直方图（SYSTEM 视图） + mood 联动 |
 | P2-5 | `b6fbf3a` | entries 缓冲 3→8 + 长按 history overlay |
-| P2-6 | (此提交) | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |
+| P2-6 | `a41352a` | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |
