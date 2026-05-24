@@ -20,16 +20,20 @@ authoritative wire spec; this firmware only consumes it.
 | Function          | Pin / detail                                |
 |-------------------|---------------------------------------------|
 | MCU               | ESP32-S3-WROOM-1-N16R8 (16 MB flash, 8 MB octal PSRAM) |
-| Display           | ST7305 RLCD 300×400 mono, SPI               |
-| RLCD SCK/MOSI     | GPIO 11 / 12                                |
-| RLCD DC/CS/RST    | GPIO 5 / 40 / 41 (TE on GPIO 6, unused)     |
+| Display           | ST7305 RLCD 300x400 mono, SPI               |
+| RLCD SCL/SDA      | GPIO 11 / 12                                |
+| RLCD RS/CS/RESET  | GPIO 5 / 40 / 41 (TE on GPIO 6, unused)     |
+| Touch panel       | TP_INT 7, TP_SDA 13, TP_SCL 14, TP_RESET 42 (shares I2C; unused by us) |
 | Buttons (usable)  | KEY = GPIO 18, BOOT = GPIO 0                |
-| Power button      | Key3 → ETA6098 PMIC OUTH — **not GPIO, software cannot read** |
+| Power button      | Key3 -> ETA6098 PMIC OUTH -- **not GPIO, software cannot read** |
 | Battery sense     | ADC1_CH3 (GPIO 4) with 1/3 divider          |
-| I²C (SHTC3 + PCF85063 + ES8311) | SDA = 13, SCL = 14            |
-| SHTC3 addr        | 0x70                                        |
-| Audio codec       | ES8311 — I2S MCLK 16, BCLK 9, WS 45, DIN 10, DOUT 8, PA_EN 46 (unused) |
-| SD card           | MOSI 21, SCK 38, MISO 39, CS 17 (R7 may be NC) |
+| I2C bus           | SDA = 13, SCL = 14 (shared: SHTC3 + PCF85063 + ES8311 + QMI8658C + TP) |
+| SHTC3 addr        | 0x70 (temp/humidity)                        |
+| PCF85063 addr     | 0x51 (RTC); INT pin on GPIO 15 (unused)     |
+| **QMI8658C** addr | 0x6A or 0x6B (6-axis IMU) **— available but unused; we use BLE-disconnect proxy for nap detection** |
+| Audio codec       | ES8311: I2S MCLK 16, SCLK 9, LRCK 45, **DSDIN 8** (ESP32->codec, playback), ASDOUT 10 (codec->ESP32, mic, unused), PA_CTRL 46. I2C addr 0x18. |
+| SD card           | MOSI 21, SCK 38, MISO 39, CS 17 (R7 may be NC; unused) |
+| UART0 (USB-JTAG)  | TX 43, RX 44 (Serial console)               |
 
 ## Common Commands
 

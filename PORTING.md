@@ -137,7 +137,7 @@ REFERENCE.md turn 事件：
 |---|---|---|
 | 屏 | TFT 135×240 彩色 | RLCD 300×400 单色（更大、反射）|
 | 按键 | A、B、电源键 3 个 | KEY、BOOT 2 个 + 电源 PMIC |
-| IMU | ✅ MPU6886（摇晃 → dizzy，翻面 → nap）| ❌ 无 |
+| IMU | ✅ MPU6886（摇晃 → dizzy，翻面 → nap）| ➖ 板上有 QMI8658C @ I2C 0x6A/0x6B（未驱动） |
 | LED | ✅ 红色指示灯 | ❌ |
 | 蜂鸣器 / 喇叭 | ✅ 内置 piezo | ✅ ES8311 + I2S 已驱动，approve→ding / deny→buzz / error→buzz |
 | 麦克风 | ❌ | ✅ 双麦阵列（未用）|

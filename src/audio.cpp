@@ -8,12 +8,17 @@ namespace {
 // CE pin tied low on the Waveshare board => I2C address 0x18.
 constexpr uint8_t ES8311_ADDR = 0x18;
 
-// Hardware pin map (matches CLAUDE.md).
+// Hardware pin map. The Waveshare board datasheet lists these from the
+// CODEC's perspective: DSDIN = data going INTO the codec (playback path,
+// ESP32 OUTPUT) = GPIO 8, ASDOUT = data going OUT of the codec (mic path,
+// ESP32 INPUT) = GPIO 10. The first cut of this module had DOUT pointed
+// at GPIO 10 (the mic line) and produced silence -- corrected to GPIO 8.
 constexpr int PIN_PA_EN = 46;
 constexpr int PIN_MCLK  = 16;
-constexpr int PIN_BCLK  = 9;
-constexpr int PIN_WS    = 45;
-constexpr int PIN_DOUT  = 10;
+constexpr int PIN_BCLK  = 9;    // I2S SCLK
+constexpr int PIN_WS    = 45;   // I2S LRCK
+constexpr int PIN_DOUT  = 8;    // I2S DSDIN — ESP32 -> codec (playback)
+// constexpr int PIN_DIN = 10; // I2S ASDOUT — codec -> ESP32 (mic, unused)
 
 constexpr int SAMPLE_RATE = 16000;
 
