@@ -319,15 +319,19 @@ void drawBottomBar() {
   }
   if (active_prompt) {
     snprintf(left, sizeof(left),
-             "[KEY] APPROVE  [BOOT] DENY  long=history");
+             "[KEY] APPROVE  [BOOT] DENY  longpress=history");
   } else if (g_state.view == 0) {
     snprintf(left, sizeof(left),
-             "[KEY] next  [BOOT] prev  long=history%s", page);
+             "[KEY] next  [BOOT] prev  longpress=history%s", page);
+  } else if (g_state.view == 1) {
+    snprintf(left, sizeof(left),
+             "[KEY] next  [BOOT] prev  longpress=menu%s", page);
   } else if (g_state.view == 2) {
     snprintf(left, sizeof(left),
-             "[KEY] next  [BOOT] prev  long=%s%s",
+             "[KEY] next  [BOOT] prev  longpress=%s%s",
              g_state.demo_mode ? "exit demo" : "demo", page);
   } else {
+    // CLOCK view — long-press just cycles, nothing extra to hint at.
     snprintf(left, sizeof(left),
              "[KEY] next  [BOOT] prev%s", page);
   }
@@ -468,6 +472,58 @@ static void drawPips(int x, int y, int n, int filled, int radius, int spacing) {
     if (i < filled) u->drawDisc(cx, y, radius);
     else            u->drawCircle(cx, y, radius);
   }
+}
+
+// Heart bitmaps for the Mood row. 11 wide x 8 tall, two variants (filled
+// and outline). Matches the heart-rating visual used by the official
+// M5StickC reference firmware -- the user explicitly asked for it.
+constexpr int HEART_W = 11;
+constexpr int HEART_H = 8;
+static const uint8_t HEART_FILLED_XBM[] PROGMEM = {
+  0x6C, 0x00,   // ..##.##....
+  0xFC, 0x01,   // ..#######..
+  0xFC, 0x01,   // ..#######..
+  0xFC, 0x01,   // ..#######..
+  0xF8, 0x00,   // ...#####...
+  0xF8, 0x00,   // ...#####...
+  0x70, 0x00,   // ....###....
+  0x20, 0x00,   // .....#.....
+};
+static const uint8_t HEART_OUTLINE_XBM[] PROGMEM = {
+  0x6C, 0x00,   // ..##.##....
+  0x94, 0x01,   // ..#.#..##..
+  0x04, 0x01,   // ..#.....#..
+  0x04, 0x01,   // ..#.....#..
+  0x88, 0x00,   // ...#...#...
+  0x88, 0x00,   // ...#...#...
+  0x50, 0x00,   // ....#.#....
+  0x20, 0x00,   // .....#.....
+};
+static void drawHeart(int x, int y, bool filled) {
+  // drawXBM consumes a RAM pointer; stage from PROGMEM. The bitmap is tiny
+  // (16 B) so the stack copy is cheap.
+  static uint8_t buf[sizeof(HEART_FILLED_XBM)];
+  memcpy_P(buf, filled ? HEART_FILLED_XBM : HEART_OUTLINE_XBM, sizeof(buf));
+  u->drawXBM(x, y, HEART_W, HEART_H, buf);
+}
+
+// Mood -> hearts mapping. Same inputs as moodAdjective() (energy_tier +
+// velocity + offline + prompt + workload), output is 0..5 hearts that
+// matches the official M5 firmware's 5-heart affection scale.
+static int computeMoodHearts() {
+  if (g_state.napping)    return 0;          // asleep = no hearts
+  if (!linkActive())      return 1;          // offline = one dim heart
+  int e = (int)g_state.energy_tier;
+  if (g_state.velocity_count > 0) {
+    uint16_t avg = velocityMean();
+    if (avg > 0 && avg < 5)     e++;
+    else if (avg > 30)          e--;
+  }
+  if (g_state.prompt.active)    e--;         // alert / interrupted
+  if (g_state.running > 2)      e--;         // overloaded
+  if (e < 0) e = 0;
+  if (e > 5) e = 5;
+  return e;
 }
 
 // Battery-cell-style indicator: N rounded rectangles in a row, the first
@@ -624,12 +680,27 @@ void drawMainView() {
   int label_col_w = 52;   // x-offset where the bar / number starts in each row
   char buf[64];
 
-  // --- Mood ---
+  // --- Mood: row of 5 hearts (filled = current mood level) ---
+  // Was a helvB18 adjective ("focused" / "spry" / etc); the user asked for
+  // the heart-rating visual from the official M5StickC reference firmware.
+  // moodAdjective() and computeMoodHearts() share the same input logic so
+  // SYSTEM-view consumers of moodAdjective() (if any) still work.
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(rx, ry + 16, "Mood");
-  u->setFont(u8g2_font_helvB18_tf);
-  u->drawStr(rx + label_col_w, ry + 18, moodAdjective());
-  ry += 24;
+  u->drawStr(rx, ry + 14, "Mood");
+  {
+    int hearts = computeMoodHearts();
+    int hx = rx + label_col_w;
+    int hy = ry + 6;
+    int spacing = HEART_W + 4;
+    for (int i = 0; i < 5; i++) {
+      drawHeart(hx + i * spacing, hy, i < hearts);
+    }
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d/5", hearts);
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(hx + 5 * spacing + 4, ry + 14, buf);
+  }
+  ry += 20;
 
   // --- Energy: 5 rounded cells ---
   u->setFont(u8g2_font_6x13B_tf);
