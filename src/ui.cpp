@@ -474,8 +474,20 @@ void drawMainView() {
     line_y += 14;
   }
   if (rows == 0) {
-    u->setFont(u8g2_font_6x10_tf);
-    u->drawStr(8, line_y, "(no messages yet — transcript will appear here)");
+    // Official M5StickC behaviour: when `entries` is empty, fall back to
+    // showing the `msg` field as the recent line.
+    if (g_state.msg.length()) {
+      u->setFont(u8g2_font_7x13_tf);
+      String s = "> " + g_state.msg;
+      int max_chars = (W - 14) / 7;
+      if ((int)s.length() > max_chars) s = s.substring(0, max_chars - 1) + "~";
+      u->drawStr(8, ey + 14, s.c_str());
+    } else {
+      u->setFont(u8g2_font_6x10_tf);
+      u->drawStr(8, ey + 14, ble_nus::connected()
+                              ? "(no transcript yet — start a Claude session)"
+                              : "(offline)");
+    }
   }
 }
 
