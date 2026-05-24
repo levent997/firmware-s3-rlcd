@@ -426,6 +426,45 @@ static void drawPips(int x, int y, int n, int filled, int radius, int spacing) {
   }
 }
 
+// Battery-cell-style indicator: N rounded rectangles in a row, the first
+// `filled` of them solid, the rest just outlined. Reads like a fuel gauge
+// or a health bar — better than discs for "discrete tiers" semantics.
+static void drawCellBar(int x, int y, int total_w, int h, int n, int filled) {
+  if (n <= 0) return;
+  int gap = 2;
+  int cell_w = (total_w - gap * (n - 1)) / n;
+  if (cell_w < 4) cell_w = 4;
+  for (int i = 0; i < n; i++) {
+    int cx = x + i * (cell_w + gap);
+    if (i < filled) u->drawRBox(cx, y, cell_w, h, 2);
+    else            u->drawRFrame(cx, y, cell_w, h, 2);
+  }
+}
+
+// Continuous progress bar with N-1 subdivision tick marks knocked out in
+// inverse colour so they're visible on both filled and unfilled regions.
+// More polished than a row of pips for a continuous progress metric.
+static void drawTickedBar(int x, int y, int w, int h, int pct, int ticks) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  u->drawRFrame(x, y, w, h, 2);
+  int inner_x = x + 2;
+  int inner_y = y + 1;
+  int inner_w = w - 4;
+  int inner_h = h - 2;
+  if (inner_w <= 0 || inner_h <= 0) return;
+  int fw = inner_w * pct / 100;
+  if (fw > 0) u->drawBox(inner_x, inner_y, fw, inner_h);
+  if (ticks > 1) {
+    u->setDrawColor(0);
+    for (int i = 1; i < ticks; i++) {
+      int tx = inner_x + (inner_w * i) / ticks;
+      u->drawVLine(tx, inner_y, inner_h);
+    }
+    u->setDrawColor(1);
+  }
+}
+
 // Full-screen approval view used when prompt.active. The MAIN dashboard is
 // replaced entirely so the prompt is impossible to miss. KEY approves,
 // BOOT denies, either long-press escapes to view navigation.
@@ -521,49 +560,81 @@ void drawMainView() {
   u->setDrawColor(1);
 
   // ===== Right column: vital signs =====
+  //
+  // Design: label-on-left + visualisation-on-right, four stacked rows.
+  //
+  //   Mood    <adjective in helvB18>
+  //   Energy  [▮▮▮▮▯]   4/5         (5 rounded cells, fuel-gauge style)
+  //   Fed     [██████▒▒▒▒]  7/10    (continuous bar w/ 10 subdivisions)
+  //   Level   96  -> L97 in 12K tok (medium number + countdown subtitle)
+  //
+  // The previous layout used logisoso24 (24 px) for both Mood and Level
+  // and rendered Energy / Fed as rows of pip discs. The big logisoso for
+  // Level was crashing into Fed's pips; the pips themselves looked toy-ish
+  // for what is otherwise a fairly information-dense dashboard. This
+  // redesign tightens vertical rhythm to ~22 px per row, swaps logisoso
+  // for helvB18 (still bold and prominent, less cartoon), and replaces
+  // pips with proper bar visualisations.
   int rx = spr_x + SPRITE_W + 12;
   int ry = TOP_H + 6;
+  int label_col_w = 52;   // x-offset where the bar / number starts in each row
   char buf[64];
 
-  // Mood (big italic)
+  // --- Mood ---
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(rx, ry + 10, "Mood");
-  u->setFont(u8g2_font_logisoso24_tr);
-  u->drawStr(rx + 50, ry + 18, moodAdjective());
+  u->drawStr(rx, ry + 16, "Mood");
+  u->setFont(u8g2_font_helvB18_tf);
+  u->drawStr(rx + label_col_w, ry + 18, moodAdjective());
   ry += 24;
 
-  // Energy as 5 pips (matches the M5StickC reference model)
+  // --- Energy: 5 rounded cells ---
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(rx, ry + 10, "Energy");
-  drawPips(rx + 50, ry + 6, 5, g_state.energy_tier, 5, 14);
-  snprintf(buf, sizeof(buf), "%d/5", g_state.energy_tier);
-  u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(rx + 50 + 5 * 14 + 6, ry + 10, buf);
-  ry += 16;
+  u->drawStr(rx, ry + 13, "Energy");
+  {
+    int bar_x = rx + label_col_w;
+    int bar_w = 96;
+    drawCellBar(bar_x, ry + 2, bar_w, 14, 5, g_state.energy_tier);
+    snprintf(buf, sizeof(buf), "%d/5", g_state.energy_tier);
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(bar_x + bar_w + 6, ry + 13, buf);
+  }
+  ry += 20;
 
-  // Fed as 10 small pips. fed = (tokens % 50000) / 5000
+  // --- Fed: continuous bar with 10-segment subdivisions ---
   uint8_t fed = (uint8_t)((g_state.tokens % TOKENS_PER_LEVEL) / TOKENS_PER_FED_PIP);
+  int fed_pct = (int)((g_state.tokens % TOKENS_PER_LEVEL) * 100UL / TOKENS_PER_LEVEL);
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(rx, ry + 10, "Fed");
-  drawPips(rx + 50, ry + 6, 10, fed, 3, 8);
-  snprintf(buf, sizeof(buf), "%u/10", (unsigned)fed);
-  u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(rx + 50 + 10 * 8 + 6, ry + 10, buf);
-  ry += 16;
+  u->drawStr(rx, ry + 12, "Fed");
+  {
+    int bar_x = rx + label_col_w;
+    int bar_w = 128;
+    drawTickedBar(bar_x, ry + 2, bar_w, 12, fed_pct, 10);
+    snprintf(buf, sizeof(buf), "%u/10", (unsigned)fed);
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(bar_x + bar_w + 6, ry + 12, buf);
+  }
+  ry += 20;
 
-  // Level (large)
+  // --- Level: medium bold number + arrow countdown ---
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(rx, ry + 10, "Level");
-  u->setFont(u8g2_font_logisoso24_tr);
+  u->drawStr(rx, ry + 16, "Level");
+  u->setFont(u8g2_font_helvB18_tf);
   snprintf(buf, sizeof(buf), "%lu", (unsigned long)g_state.level);
-  u->drawStr(rx + 50, ry + 18, buf);
-  // Next-level token countdown to the right
-  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(rx + label_col_w, ry + 18, buf);
+  int level_num_w = u->getStrWidth(buf);
+  // Countdown tail: "-> L97 in 12K tok"
   uint32_t to_next = TOKENS_PER_LEVEL - (g_state.tokens % TOKENS_PER_LEVEL);
-  snprintf(buf, sizeof(buf), "%lu tok to L%lu",
-           (unsigned long)to_next, (unsigned long)(g_state.level + 1));
-  u->drawStr(rx + 100, ry + 18, buf);
-  ry += 28;
+  char tail[40];
+  if (to_next >= 1000) {
+    snprintf(tail, sizeof(tail), "-> L%lu in %luK tok",
+             (unsigned long)(g_state.level + 1), to_next / 1000);
+  } else {
+    snprintf(tail, sizeof(tail), "-> L%lu in %lu tok",
+             (unsigned long)(g_state.level + 1), to_next);
+  }
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(rx + label_col_w + level_num_w + 8, ry + 16, tail);
+  ry += 24;
 
   // Divider then Now line
   u->drawHLine(rx, ry, W - rx - 6);
