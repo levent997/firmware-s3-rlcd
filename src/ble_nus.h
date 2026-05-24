@@ -8,4 +8,5 @@ namespace ble_nus {
   void loop();
   bool connected();
   void sendLine(const String &line);
+  void clearBonds();   // for cmd:unpair
 }

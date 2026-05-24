@@ -237,7 +237,9 @@ void drawTopBar() {
   };
 
   drawIndicator("WiFi", false);
-  drawIndicator("BT", ble_nus::connected());
+  // Show "BT*" with a trailing asterisk when the link is encrypted, so a
+  // glance at the top bar confirms transcript snippets aren't in clear text.
+  drawIndicator(g_state.secure ? "BT*" : "BT", ble_nus::connected());
 
   u->setDrawColor(1);
 }
@@ -864,6 +866,39 @@ void ui::begin(U8G2 *uu) {
   u = uu;
 }
 
+// Full-screen passkey display during pairing. Centered 6-digit number
+// in a big font, with instructions.
+static void drawPasskeyScreen() {
+  u->clearBuffer();
+  u->setDrawColor(1);
+  u->setFont(u8g2_font_helvB18_tf);
+  const char *t = "Pair this device";
+  int tw = u->getStrWidth(t);
+  u->drawStr((W - tw) / 2, 50, t);
+
+  u->setFont(u8g2_font_6x13B_tf);
+  const char *t2 = "Enter this passkey on the desktop:";
+  int t2w = u->getStrWidth(t2);
+  u->drawStr((W - t2w) / 2, 75, t2);
+
+  // The passkey itself, huge.
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%06lu", (unsigned long)g_state.passkey);
+  u->setFont(u8g2_font_logisoso50_tn);
+  int bw = u->getStrWidth(buf);
+  u->drawStr((W - bw) / 2, 175, buf);
+
+  u->setFont(u8g2_font_6x10_tf);
+  const char *t3 = "Once accepted, the link will be encrypted.";
+  int t3w = u->getStrWidth(t3);
+  u->drawStr((W - t3w) / 2, 220, t3);
+  const char *t4 = "Cancel pairing in the desktop window to abort.";
+  int t4w = u->getStrWidth(t4);
+  u->drawStr((W - t4w) / 2, 235, t4);
+
+  u->sendBuffer();
+}
+
 bool ui::render() {
   if (!u) return false;
   uint32_t now = millis();
@@ -872,6 +907,17 @@ bool ui::render() {
   if (now - lastFrameMs > 200) {
     lastFrameMs = now;
     g_state.anim_frame++;
+  }
+
+  // Passkey overlay takes priority over everything.
+  if (g_state.passkey_displaying) {
+    // Hash includes the passkey so the screen updates if a new one is generated.
+    uint32_t h = g_state.passkey ^ 0xBEEF;
+    if (h != lastHash) {
+      lastHash = h;
+      drawPasskeyScreen();
+    }
+    return true;
   }
 
   uint32_t h = hashState();

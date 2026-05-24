@@ -29,6 +29,11 @@ struct BuddyState {
   String name = "Clawd";
   String owner;
 
+  // BLE pairing state.
+  bool secure = false;             // link is LE Secure Connections-encrypted
+  bool passkey_displaying = false; // showing passkey screen overlay
+  uint32_t passkey = 0;            // 6-digit passkey to display
+
   uint32_t approvals = 0;
   uint32_t denies = 0;
 

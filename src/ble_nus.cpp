@@ -1,4 +1,5 @@
 #include "ble_nus.h"
+#include "state.h"
 #include <NimBLEDevice.h>
 
 namespace {
@@ -19,11 +20,38 @@ class ServerCB : public NimBLEServerCallbacks {
   }
   void onDisconnect(NimBLEServer *s) override {
     g_connected = false;
+    g_state.secure = false;
+    g_state.passkey_displaying = false;
+    g_state.passkey = 0;
     Serial.println("[ble] disconnected, restarting advertising");
     NimBLEDevice::startAdvertising();
   }
   void onMTUChange(uint16_t mtu, ble_gap_conn_desc *) override {
     Serial.printf("[ble] mtu=%u\n", (unsigned)mtu);
+  }
+
+  // Pairing: we declare DisplayOnly IO capability so the peer prompts
+  // the user for the passkey we generate.
+  uint32_t onPassKeyRequest() override {
+    // Random 6-digit passkey: BLE spec says 000000-999999.
+    uint32_t p = esp_random() % 1000000UL;
+    g_state.passkey = p;
+    g_state.passkey_displaying = true;
+    Serial.printf("[ble] passkey requested: %06lu (display on screen)\n",
+                  (unsigned long)p);
+    return p;
+  }
+
+  void onAuthenticationComplete(ble_gap_conn_desc *desc) override {
+    g_state.passkey_displaying = false;
+    g_state.passkey = 0;
+    if (desc->sec_state.encrypted) {
+      g_state.secure = true;
+      Serial.println("[ble] auth OK, link encrypted");
+    } else {
+      g_state.secure = false;
+      Serial.println("[ble] auth FAILED");
+    }
   }
 };
 
@@ -56,14 +84,33 @@ void ble_nus::begin(const String &name, RxLineHandler on_line) {
   NimBLEDevice::init(name.c_str());
   NimBLEDevice::setMTU(247);
 
+  // Security: LE Secure Connections + MITM protection + bond. DisplayOnly
+  // capability — we show the passkey on the RLCD; the desktop prompts the
+  // user to type it in.
+  NimBLEDevice::setSecurityAuth(/*bonding*/ true,
+                                /*mitm*/    true,
+                                /*sc*/      true);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+
   g_server = NimBLEDevice::createServer();
   g_server->setCallbacks(new ServerCB());
 
   NimBLEService *svc = g_server->createService(SVC_UUID);
-  g_tx = svc->createCharacteristic(TX_UUID, NIMBLE_PROPERTY::NOTIFY);
+
+  // Encrypted-only access for both the TX notify and the RX write
+  // characteristics. The CCCD inherits the same permission via
+  // NimBLE's default policy when the characteristic is marked
+  // _ENC. This forces the central to bond before doing anything.
+  g_tx = svc->createCharacteristic(
+      TX_UUID,
+      NIMBLE_PROPERTY::NOTIFY |
+      NIMBLE_PROPERTY::READ_ENC);
   g_tx->setCallbacks(new TxCB());
   NimBLECharacteristic *rx = svc->createCharacteristic(
-      RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+      RX_UUID,
+      NIMBLE_PROPERTY::WRITE     |
+      NIMBLE_PROPERTY::WRITE_NR  |
+      NIMBLE_PROPERTY::WRITE_ENC);
   rx->setCallbacks(new RxCB());
   svc->start();
 
@@ -77,6 +124,14 @@ void ble_nus::begin(const String &name, RxLineHandler on_line) {
 void ble_nus::loop() {}
 
 bool ble_nus::connected() { return g_connected; }
+
+void ble_nus::clearBonds() {
+  int n = NimBLEDevice::getNumBonds();
+  if (n > 0) {
+    NimBLEDevice::deleteAllBonds();
+    Serial.printf("[ble] cleared %d bond(s)\n", n);
+  }
+}
 
 void ble_nus::sendLine(const String &line) {
   if (!g_connected || !g_tx) return;

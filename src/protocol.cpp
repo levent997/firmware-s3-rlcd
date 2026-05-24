@@ -61,7 +61,7 @@ void sendStatusAck() {
   d["ok"] = true;
   JsonObject data = d["data"].to<JsonObject>();
   data["name"] = g_state.name;
-  data["sec"] = false;
+  data["sec"] = g_state.secure;
   JsonObject sys = data["sys"].to<JsonObject>();
   sys["up"] = (uint32_t)(millis() / 1000);
   sys["heap"] = (uint32_t)ESP.getFreeHeap();
@@ -189,8 +189,7 @@ void protocol::handleLine(const String &line) {
       return;
     }
     if (!strcmp(cmd, "unpair"))      {
-      // No bonds yet (encryption stage TBD), but wipe NVS so the
-      // next pairing starts from defaults.
+      ble_nus::clearBonds();
       persist::wipe();
       sendAck("unpair", true);
       return;
