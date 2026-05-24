@@ -794,10 +794,14 @@ void drawUsageView() {
   row("Current session", sub_5h, pct_5h);
 
   // ---- Section: Weekly limits ----
+  // helvB12_tf is variable-width; measure rather than hardcode so the
+  // subtitle never collides with the section header.
   u->setFont(u8g2_font_helvB12_tf);
-  u->drawStr(8, y + 10, "Weekly limits");
+  const char *wk = "Weekly limits";
+  u->drawStr(8, y + 10, wk);
+  int wk_w = u->getStrWidth(wk);
   u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(100, y + 10, "BLE protocol does not expose these");
+  u->drawStr(8 + wk_w + 12, y + 10, "BLE protocol does not expose these");
   y += 14;
 
   // ---- Row 2: All models (n/a) ----
@@ -1001,9 +1005,11 @@ void drawSystemView() {
   u->drawBox(0, TOP_H, W, 30);
   u->setDrawColor(0);
   u->setFont(u8g2_font_logisoso24_tr);
-  u->drawStr(12, TOP_H + 22, "SYSTEM");
+  const char *sys_title = "SYSTEM";
+  u->drawStr(12, TOP_H + 22, sys_title);
+  int sys_w = u->getStrWidth(sys_title);
   u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(170, TOP_H + 22, "diagnostics");
+  u->drawStr(12 + sys_w + 14, TOP_H + 22, "diagnostics");
   u->setDrawColor(1);
 
   int y = TOP_H + 44;
