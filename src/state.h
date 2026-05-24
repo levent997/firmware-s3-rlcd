@@ -35,6 +35,7 @@ struct BuddyState {
   // Local sensors / clock
   int battery_pct = -1;            // -1 = unknown
   float battery_v = 0.0f;
+  bool charging = false;           // heuristic: voltage trending up or near-full
   float temp_c = NAN;
   float humidity_pct = NAN;
   uint32_t time_epoch = 0;         // last synced epoch seconds

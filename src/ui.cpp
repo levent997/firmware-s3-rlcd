@@ -134,10 +134,26 @@ void drawTopBar() {
     // battery icon to the LEFT of percent
     int bw = 18, bh = 10;
     x -= bw + 2;
-    u->drawFrame(x, (TOP_H - bh) / 2, bw, bh);
-    u->drawBox(x + bw, (TOP_H - bh) / 2 + 2, 2, bh - 4);
+    int bx = x, by = (TOP_H - bh) / 2;
+    u->drawFrame(bx, by, bw, bh);
+    u->drawBox(bx + bw, by + 2, 2, bh - 4);
     int fill = (g_state.battery_pct >= 0) ? (g_state.battery_pct * (bw - 2) / 100) : 0;
-    if (fill > 0) u->drawBox(x + 1, (TOP_H - bh) / 2 + 1, fill, bh - 2);
+    if (fill > 0) u->drawBox(bx + 1, by + 1, fill, bh - 2);
+
+    // Lightning bolt overlay when charging (drawn in inverse, so the
+    // shape shows up regardless of fill level).
+    if (g_state.charging) {
+      int cx = bx + bw / 2;
+      int cy = by + bh / 2;
+      // Erase the fill behind the bolt so it stays visible on filled batteries.
+      u->setDrawColor(0);
+      u->drawBox(cx - 3, by + 1, 6, bh - 2);
+      u->setDrawColor(1);
+      // Zig-zag lightning: top-right → middle-left → bottom-right
+      u->drawLine(cx + 2, by + 1, cx - 1, cy);
+      u->drawLine(cx - 1, cy,     cx + 1, cy);
+      u->drawLine(cx + 1, cy,     cx - 2, by + bh - 2);
+    }
     x -= 10;
   }
 
@@ -478,9 +494,11 @@ void drawUsageView() {
   u->drawBox(0, TOP_H, W, 24);
   u->setDrawColor(0);
   u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(8, TOP_H + 17, "Plan usage limits");
+  const char *t1 = "Plan usage limits";
+  u->drawStr(8, TOP_H + 17, t1);
+  int t1w = u->getStrWidth(t1);
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(132, TOP_H + 17, "Max (5x) *");
+  u->drawStr(8 + t1w + 14, TOP_H + 17, "Max (5x) *");
   // right side: current time
   if (g_state.time_sync_ms) {
     uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
@@ -770,16 +788,19 @@ void drawSystemView() {
 }
 
 void drawOfflineHint() {
-  // Overlay when not connected — show a subtle hint band over main view
+  // Overlay when not connected — show a subtle hint band over main view.
   if (ble_nus::connected()) return;
-  int y = H - BOT_H - 18;
+  const int box_h = 20;
+  int y = H - BOT_H - box_h - 2;
   u->setDrawColor(1);
-  u->drawBox(0, y, W, 16);
+  u->drawBox(0, y, W, box_h);
   u->setDrawColor(0);
-  u->setFont(u8g2_font_6x13B_tf);
+  // helvB12 reads cleaner than 6x13B at this size; variable spacing gives
+  // breathing room between letters when inverted.
+  u->setFont(u8g2_font_helvB12_tf);
   const char *t = "Open Hardware Buddy in Claude desktop and connect";
   int tw = u->getStrWidth(t);
-  u->drawStr((W - tw) / 2, y + 12, t);
+  u->drawStr((W - tw) / 2, y + 14, t);
   u->setDrawColor(1);
 }
 } // namespace

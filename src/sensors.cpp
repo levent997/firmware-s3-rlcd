@@ -90,6 +90,24 @@ void sensors::loop() {
   else if (bat_v > 4.15f) g_state.battery_pct = 100;
   else g_state.battery_pct = (int)((bat_v - 3.3f) / 0.85f * 100.0f);
 
+  // Charging detection — heuristic since the ETA6098 STAT pin is not
+  // wired to a GPIO. Maintain a 60s circular buffer of voltage samples
+  // (we tick every 5s, so 12 slots = 60s). Charging if any of:
+  //   (a) voltage trending up ≥ 0.03 V over the last 60s
+  //   (b) voltage > 4.18 V (almost full; only true when on charger)
+  static float bv_hist[12] = {0};
+  static int   bv_pos = 0;
+  static bool  bv_filled = false;
+  float oldest = bv_hist[bv_pos];   // about-to-be-overwritten slot is the oldest
+  bv_hist[bv_pos] = bat_v;
+  bv_pos = (bv_pos + 1) % 12;
+  if (bv_pos == 0) bv_filled = true;
+
+  bool charge = false;
+  if (bat_v > 4.18f) charge = true;
+  if (bv_filled && (bat_v - oldest) > 0.03f) charge = true;
+  g_state.charging = charge;
+
   // SHTC3
   if (shtc3_present) {
     float t, h;
