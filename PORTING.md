@@ -304,4 +304,4 @@ REFERENCE.md turn 事件：
 | P0-1 | `e314a9b` | NVS 持久化 |
 | P0-2 | `dd29e52` | LE Secure Connections 加密 + passkey 屏 |
 | P1-3 | `73fc03e` | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
-| P1-4 | (此提交) | Velocity 直方图（SYSTEM 视图） + mood 联动 |
+| P1-4 | `c7040d7` | Velocity 直方图（SYSTEM 视图） + mood 联动 |
