@@ -123,9 +123,9 @@ REFERENCE.md turn 事件：
 | Info（多页 stats 含 velocity 直方图）| ✅ 3 页 | ⚠️ 部分内容散在 USAGE / SYSTEM，缺直方图 |
 | Clock | ✅ 大数字时钟独立屏 | ✅ 第 4 视图 logisoso50 巨字 + 日期 + 同步源标识 |
 | Approval（待审批专用屏 + 倒计时）| ✅ | ✅ `drawApprovalView()` 全屏接管 |
-| Menu（长按 A）| ✅ | ❌ |
-| Settings | ✅ | ❌ |
-| Reset / Factory Reset | ✅ | ⚠️ `cmd:unpair` 通过 BLE 触发，无 UI 入口 |
+| Menu（长按 A）| ✅ | ✅ USAGE 视图长按 KEY/BOOT 唤出 6 项菜单 |
+| Settings | ✅ | ✅ Sound 开关已实现 + 持久化 |
+| Reset / Factory Reset | ✅ | ✅ 菜单"Reset stats"/"Factory reset"，destructive 两步确认 |
 | Passkey | ✅ | ✅ `drawPasskeyScreen()` |
 | 演示模式 | ✅ 长按某键进入 | ✅ SYSTEM 视图长按进入，7 场景轮播 + 顶栏 DEMO 角标 |
 
@@ -257,10 +257,13 @@ REFERENCE.md turn 事件：
   - 底栏 SYSTEM 视图左下角提示 `long-press = demo mode / exit demo`
 - 帮手函数 `linkActive()` = `BLE.connected() || demo_mode`，sprite/mood 都以它为准
 
-### P3：菜单系统（长按 KEY 进入）
-- 设置项：声音开关 / WiFi 开关 / 时钟模式 / 重置统计 / 工厂复位
-- 用按键导航：BOOT 切项，KEY 确认
-- 参考代码：`src/main.cpp:322-355 drawMenu()`
+### ✅ P3：菜单系统 — **完成** (本次提交)
+- 入口：USAGE 视图长按 KEY 或 BOOT
+- 6 个菜单项：Sound 开/关（持久化）/ Reset stats / Remove packs / Factory reset / Reboot / Cancel
+- destructive 项（除 Sound 和 Cancel）都需要二次 KEY-long 确认
+- 菜单内导航：KEY 短按下一项 / BOOT 短按上一项 / KEY 长按激活 / BOOT 长按返回
+- 30 s 无操作自动关菜单
+- 新模块 `src/menu.{h,cpp}` + persist::onSoundChanged / persist::resetStats / state.h 字段
 
 ### ✅ P3：音频反馈 — **完成** (本次提交)
 - 新模块 `src/audio.{h,cpp}` 驱动 ES8311 @ I2C 0x18 + I2S TX
@@ -314,7 +317,9 @@ REFERENCE.md turn 事件：
 | 菜单 / 设置 / 重置 UI | 0% |
 | Clock 独立屏 | 100% |
 | RTC 写入 (PCF85063) | 100% |
-| 音频反馈 (ES8311) | ~95%（init OK，实机听感待用户确认）|
+| 音频反馈 (ES8311) | 100%（DSDIN 引脚修正后通声）|
+| 菜单系统 / 设置 | 100% |
+| IMU (QMI8658C) | 驱动 100%，本机 DNP |
 | 演示模式（fake heartbeat）| 100% |
 
 **两条 P0 通路（加密 + NVS）都已打通**，本机现在**功能等价**于官方固件可以日用。
@@ -338,3 +343,6 @@ REFERENCE.md turn 事件：
 | P1-8c | `4aa36fe` | AnimatedGIF 运行时解码 -> sprite override |
 | P3-9  | `7371938` | Clock 独立屏（第 4 视图，logisoso50 巨字）|
 | P3-10 | `6d3485c` | ES8311 + I2S 音频反馈（ding/buzz/chirp）|
+| 修 P3-10 | `0e9c924` | I2S DOUT 引脚 10→8 修正 |
+| P3-11 | `27957d1` | QMI8658C IMU 驱动（本机 DNP，代码留着）|
+| P3-12 | `191f50b` | 菜单系统（USAGE 长按 → 6 项设置）|
