@@ -71,6 +71,10 @@ struct BuddyState {
   uint32_t nap_started_ms = 0;     // BLE-disconnect anchor for nap detection
   bool napping = false;
 
+  // IMU-driven moods. dizzy_until_ms holds the millis() at which the dizzy
+  // state should clear after a shake (5 s by default in imu::loop).
+  uint32_t dizzy_until_ms = 0;
+
   uint32_t fed_baseline_tokens = 0;  // initial seen tokens, subtracted
   bool fed_synced = false;
   uint32_t level = 0;

@@ -137,7 +137,7 @@ REFERENCE.md turn 事件：
 |---|---|---|
 | 屏 | TFT 135×240 彩色 | RLCD 300×400 单色（更大、反射）|
 | 按键 | A、B、电源键 3 个 | KEY、BOOT 2 个 + 电源 PMIC |
-| IMU | ✅ MPU6886（摇晃 → dizzy，翻面 → nap）| ➖ 板上有 QMI8658C @ I2C 0x6A/0x6B（未驱动） |
+| IMU | ✅ MPU6886（摇晃 → dizzy，翻面 → nap）| ⚠️ Schematic 有 QMI8658C 但本机 DNP；驱动已写好，插上即用（`src/imu.{h,cpp}`）|
 | LED | ✅ 红色指示灯 | ❌ |
 | 蜂鸣器 / 喇叭 | ✅ 内置 piezo | ✅ ES8311 + I2S 已驱动，approve→ding / deny→buzz / error→buzz |
 | 麦克风 | ❌ | ✅ 双麦阵列（未用）|
@@ -280,7 +280,7 @@ REFERENCE.md turn 事件：
 | 项目 | 为什么也许不做 |
 |---|---|
 | 多 ASCII pet 物种切换 | 我们的设计是固定 Clawd 像素，更"官方风格" |
-| Face-down nap / Shake-to-dizzy | 板子没 IMU，要外接，性价比不高 |
+| Face-down nap / Shake-to-dizzy | 驱动已写好（`src/imu.{h,cpp}`），但本机 QMI8658C DNP；BLE 断开 5 min 兜底 nap |
 | AXP192 屏亮度 | RLCD 反射屏无背光，无意义 |
 | Turn event 接收 | 4KB 上限，价值低，复杂度高 |
 

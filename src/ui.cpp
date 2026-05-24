@@ -5,6 +5,7 @@
 #include "rtc.h"
 #include "xfer.h"
 #include "pack.h"
+#include "imu.h"
 #include <pgmspace.h>
 
 namespace {
@@ -29,6 +30,9 @@ static void drawProgressBar(int x, int y, int w, int h, int pct);
 
 // Map state to sprite ID.
 SpriteId moodToSprite() {
+  if (g_state.napping) return SPR_SLEEPING;
+  // Shake-to-dizzy wins over the normal state mapping for the dizzy window.
+  if (g_state.dizzy_until_ms && millis() < g_state.dizzy_until_ms) return SPR_ANNOYED;
   if (!linkActive()) return SPR_SLEEPING;
   if (g_state.prompt.active)  return SPR_NOTIFICATION;
   if (g_state.msg.length()) {
@@ -1200,6 +1204,21 @@ void drawSystemView() {
   snprintf(buf, sizeof(buf), "%luh %02lum %02lus   turns %lu",
            up / 3600, (up / 60) % 60, up % 60, (unsigned long)g_state.turns_done);
   row("Uptime", buf);
+
+  // IMU row -- raw accel + derived orientation. "face-down" matches the
+  // nap-trigger condition in imu::loop.
+  if (imu::isPresent()) {
+    const char *orient = imu::lastAzG() < -0.7f ? "face-down"
+                       : imu::lastAzG() >  0.7f ? "face-up"
+                       : "tilted";
+    bool dizzy = g_state.dizzy_until_ms && millis() < g_state.dizzy_until_ms;
+    snprintf(buf, sizeof(buf), "a %+.2f %+.2f %+.2fg  %s%s",
+             imu::lastAxG(), imu::lastAyG(), imu::lastAzG(),
+             orient, dizzy ? "  [DIZZY]" : "");
+  } else {
+    strcpy(buf, "QMI8658 not detected on I2C 0x6A/0x6B");
+  }
+  row("IMU", buf);
 
   // Storage row — combines LittleFS usage with the active pack identity.
   // The old "Stats" row (energy/level/mood text) was dropped because it

@@ -12,6 +12,7 @@
 #include "xfer.h"
 #include "pack.h"
 #include "audio.h"
+#include "imu.h"
 
 BuddyState g_state;
 
@@ -33,6 +34,7 @@ void setup() {
   buttons::begin();
   sensors::begin();
   rtc::begin();
+  imu::begin();
   xfer::begin();
   pack::init();
   audio::begin();
@@ -72,6 +74,7 @@ void setup() {
 void loop() {
   ble_nus::loop();
   sensors::loop();
+  imu::loop();
   demo::tick();
   pack::tick();
 

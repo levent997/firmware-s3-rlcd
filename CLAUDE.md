@@ -30,7 +30,7 @@ authoritative wire spec; this firmware only consumes it.
 | I2C bus           | SDA = 13, SCL = 14 (shared: SHTC3 + PCF85063 + ES8311 + QMI8658C + TP) |
 | SHTC3 addr        | 0x70 (temp/humidity)                        |
 | PCF85063 addr     | 0x51 (RTC); INT pin on GPIO 15 (unused)     |
-| **QMI8658C** addr | 0x6A or 0x6B (6-axis IMU) **— available but unused; we use BLE-disconnect proxy for nap detection** |
+| QMI8658C addr     | 0x6A or 0x6B (6-axis IMU) per datasheet. **NOT POPULATED on the test board variant** -- I2C scan only finds {0x18 ES8311, 0x40 touch, 0x51 RTC, 0x70 SHTC3}. Driver in `src/imu.{h,cpp}` is wired up and gracefully no-ops when the chip is absent; if you have a board with the IMU populated, it just works (face-down -> nap, shake -> dizzy). |
 | Audio codec       | ES8311: I2S MCLK 16, SCLK 9, LRCK 45, **DSDIN 8** (ESP32->codec, playback), ASDOUT 10 (codec->ESP32, mic, unused), PA_CTRL 46. I2C addr 0x18. |
 | SD card           | MOSI 21, SCK 38, MISO 39, CS 17 (R7 may be NC; unused) |
 | UART0 (USB-JTAG)  | TX 43, RX 44 (Serial console)               |
