@@ -310,7 +310,7 @@ void drawBottomBar() {
   char left[96];
   char page[8] = "";
   if (!active_prompt) {
-    snprintf(page, sizeof(page), " (%u/3)", (unsigned)(g_state.view + 1));
+    snprintf(page, sizeof(page), " (%u/4)", (unsigned)(g_state.view + 1));
   }
   if (active_prompt) {
     snprintf(left, sizeof(left),
@@ -1290,6 +1290,149 @@ void drawSystemView() {
   u->drawStr(12, H - BOT_H - 4, build);
 }
 
+// --- Clock view ---
+// Dedicated big-clock screen. Hours/minutes in 50 px digits centred top,
+// seconds and a colon that blinks once a second underneath. Date and
+// day-of-week on a second line. Tiny status footer.
+//
+// Data source: g_state.time_epoch / time_offset_sec / time_sync_ms, which
+// gets seeded from the PCF85063 on boot and refreshed by BLE `{"time":...}`.
+// If neither source has fired, we show "--:--" and a "waiting for time sync"
+// hint instead of fabricating.
+void drawClockView() {
+  // Resolve current local time (or absence thereof).
+  bool have_time = (g_state.time_sync_ms != 0);
+  uint32_t local_sec = 0;
+  if (have_time) {
+    uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
+    local_sec = g_state.time_epoch + elapsed + g_state.time_offset_sec;
+  }
+  int hh = (local_sec / 3600) % 24;
+  int mm = (local_sec / 60) % 60;
+  int ss = (local_sec) % 60;
+
+  // Compose HH:MM with a blinking colon — colon disappears on odd seconds.
+  // logisoso50 is a numerals-only font ("tn"), so the colon is drawn
+  // separately as a pair of small filled boxes.
+  char hh_buf[4], mm_buf[4];
+  if (have_time) {
+    snprintf(hh_buf, sizeof(hh_buf), "%02d", hh);
+    snprintf(mm_buf, sizeof(mm_buf), "%02d", mm);
+  } else {
+    strcpy(hh_buf, "--");
+    strcpy(mm_buf, "--");
+  }
+
+  u->setFont(u8g2_font_logisoso50_tn);
+  int hh_w = u->getStrWidth(hh_buf);
+  int mm_w = u->getStrWidth(mm_buf);
+  int colon_w = 16;
+  int gap = 8;
+  int total_w = hh_w + gap + colon_w + gap + mm_w;
+  int clock_x = (W - total_w) / 2;
+  int clock_y_baseline = TOP_H + 80;
+
+  u->drawStr(clock_x, clock_y_baseline, hh_buf);
+  int colon_x = clock_x + hh_w + gap;
+
+  // Colon (two stacked filled squares). Blink off when seconds is odd
+  // OR when we have no real time (so the dashes don't look like a clock).
+  bool show_colon = have_time && (ss % 2 == 0);
+  if (show_colon) {
+    int sq = 8;
+    int colon_y1 = clock_y_baseline - 38;
+    int colon_y2 = clock_y_baseline - 14;
+    u->drawBox(colon_x + (colon_w - sq) / 2, colon_y1, sq, sq);
+    u->drawBox(colon_x + (colon_w - sq) / 2, colon_y2, sq, sq);
+  }
+
+  u->drawStr(colon_x + colon_w + gap, clock_y_baseline, mm_buf);
+
+  // Seconds — smaller, off to the right of the minute digits.
+  if (have_time) {
+    char ss_buf[6];
+    snprintf(ss_buf, sizeof(ss_buf), ":%02d", ss);
+    u->setFont(u8g2_font_logisoso18_tn);
+    int ss_w = u->getStrWidth(ss_buf);
+    int ss_x = clock_x + total_w + 4;
+    if (ss_x + ss_w > W - 8) ss_x = W - 8 - ss_w;   // avoid right edge
+    u->drawStr(ss_x, clock_y_baseline, ss_buf);
+  }
+
+  // Date + day-of-week below the clock. Compute from local_sec via the
+  // same days-since-epoch math the RTC driver uses.
+  if (have_time) {
+    static const char *DOW[] = {"Thu","Fri","Sat","Sun","Mon","Tue","Wed"};
+    static const uint8_t MD[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    auto isLeap = [](int y) {
+      return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    };
+    uint32_t days = local_sec / 86400;
+    int dow = days % 7;   // 1970-01-01 was a Thursday
+    int year = 1970;
+    while (true) {
+      uint32_t yd = isLeap(year) ? 366 : 365;
+      if (days < yd) break;
+      days -= yd;
+      year++;
+    }
+    int mon = 1;
+    for (int m = 0; m < 12; m++) {
+      uint32_t dm = MD[m];
+      if (m == 1 && isLeap(year)) dm = 29;
+      if (days < dm) break;
+      days -= dm;
+      mon++;
+    }
+    int day = days + 1;
+
+    static const char *MON_NAMES[] = {
+      "Jan","Feb","Mar","Apr","May","Jun",
+      "Jul","Aug","Sep","Oct","Nov","Dec"
+    };
+    char date_buf[40];
+    snprintf(date_buf, sizeof(date_buf), "%s, %s %d %d",
+             DOW[dow], MON_NAMES[mon - 1], day, year);
+    u->setFont(u8g2_font_helvB18_tf);
+    int date_w = u->getStrWidth(date_buf);
+    u->drawStr((W - date_w) / 2, clock_y_baseline + 36, date_buf);
+
+    // Timezone tag + sync age, small subtle line under the date.
+    char meta[64];
+    long tz_h = g_state.time_offset_sec / 3600;
+    long tz_m = (labs(g_state.time_offset_sec) / 60) % 60;
+    uint32_t sync_age = (millis() - g_state.time_sync_ms) / 1000;
+    const char *src = rtc::hasValidTime() ? "RTC" : "BLE";
+    if (sync_age < 60)         snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %lus ago (%s)",   tz_h, tz_m, (unsigned long)sync_age, src);
+    else if (sync_age < 3600)  snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %lum ago (%s)",   tz_h, tz_m, (unsigned long)(sync_age/60), src);
+    else                       snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %luh ago (%s)",   tz_h, tz_m, (unsigned long)(sync_age/3600), src);
+    u->setFont(u8g2_font_6x10_tf);
+    int meta_w = u->getStrWidth(meta);
+    u->drawStr((W - meta_w) / 2, clock_y_baseline + 60, meta);
+  } else {
+    // No time available — explain why instead of showing a fake date.
+    u->setFont(u8g2_font_helvB14_tf);
+    const char *t = "waiting for time sync";
+    int tw = u->getStrWidth(t);
+    u->drawStr((W - tw) / 2, clock_y_baseline + 36, t);
+    u->setFont(u8g2_font_6x10_tf);
+    const char *t2 = ble_nus::connected()
+      ? "desktop will push current time shortly"
+      : "connect Hardware Buddy in Claude desktop";
+    int t2w = u->getStrWidth(t2);
+    u->drawStr((W - t2w) / 2, clock_y_baseline + 56, t2);
+  }
+
+  // Walking mascot strip across the bottom for visual life — Clock view is
+  // otherwise very sparse, the strip fills the lower third without competing
+  // with the numerals.
+  int strip_top = clock_y_baseline + 76;
+  int strip_h = H - BOT_H - 4 - strip_top;
+  if (strip_h > 30) {
+    drawWalkingMascot(strip_top, strip_h);
+  }
+}
+
 void drawOfflineHint() {
   // Overlay when not connected — show a subtle hint band over main view.
   // Suppressed in demo mode (the user is watching the showcase, not waiting
@@ -1480,6 +1623,7 @@ bool ui::render() {
   switch (g_state.view) {
     case 1:  drawUsageView();  break;
     case 2:  drawSystemView(); break;
+    case 3:  drawClockView();  break;
     default: drawMainView();   break;
   }
 

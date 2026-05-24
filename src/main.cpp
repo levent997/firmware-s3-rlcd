@@ -113,7 +113,7 @@ void loop() {
       //   * active prompt or MAIN view  -> open transcript history overlay
       //   * SYSTEM view                  -> toggle demo mode (and jump to MAIN
       //                                     so the user sees the showcase)
-      //   * USAGE view                   -> same as short (cycle direction)
+      //   * USAGE / CLOCK view           -> same as short (cycle direction)
       if (active_prompt || g_state.view == 0) {
         g_state.history_open = true;
         Serial.println("[ui] history opened");
@@ -121,17 +121,17 @@ void loop() {
         demo::toggle();
         if (g_state.demo_mode) g_state.view = 0;   // jump to MAIN to see it
       } else if (ev == buttons::KEY_LONG) {
-        g_state.view = (g_state.view + 1) % 3;
+        g_state.view = (g_state.view + 1) % 4;
         Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
       } else {
-        g_state.view = (g_state.view + 2) % 3;
+        g_state.view = (g_state.view + 3) % 4;
         Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
       }
     } else if (ev == buttons::KEY_SHORT) {
-      g_state.view = (g_state.view + 1) % 3;
+      g_state.view = (g_state.view + 1) % 4;
       Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
     } else if (ev == buttons::BOOT_SHORT) {
-      g_state.view = (g_state.view + 2) % 3;
+      g_state.view = (g_state.view + 3) % 4;
       Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
     }
   }

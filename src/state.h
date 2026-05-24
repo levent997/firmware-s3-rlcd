@@ -51,7 +51,7 @@ struct BuddyState {
   uint32_t time_sync_ms = 0;       // millis() when synced
 
   // UI
-  uint8_t view = 0;                // 0=main, 1=usage, 2=system
+  uint8_t view = 0;                // 0=main, 1=usage, 2=system, 3=clock
   bool history_open = false;       // long-press on MAIN opens the 8-row transcript overlay
   bool demo_mode = false;          // long-press on SYSTEM rotates fake heartbeats for showcase
   uint32_t anim_frame = 0;
