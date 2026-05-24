@@ -1,0 +1,12 @@
+.pio/
+.vscode/
+.DS_Store
+.idea/
+build/
+*.bin
+*.elf
+*.map
+
+# Python
+__pycache__/
+*.pyc
