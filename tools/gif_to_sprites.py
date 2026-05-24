@@ -26,19 +26,22 @@ MAX_FRAMES = 8         # cap to keep flash usage reasonable
 
 # Name in C => filename. Order matters only for readability.
 SPRITES = [
-    ("idle",         "clawd-idle.gif"),
-    ("idle_reading", "clawd-idle-reading.gif"),
-    ("bubble",       "clawd-bubble.gif"),
-    ("building",     "clawd-building.gif"),
-    ("typing",       "clawd-typing.gif"),
-    ("thinking",     "clawd-thinking.gif"),
-    ("sweeping",     "clawd-sweeping.gif"),
-    ("juggling",     "clawd-juggling.gif"),
-    ("happy",        "clawd-happy.gif"),
-    ("notification", "clawd-notification.gif"),
-    ("double_jump",  "clawd-react-double-jump.gif"),
-    ("error",        "clawd-error.gif"),
-    ("sleeping",     "clawd-sleeping.gif"),
+    ("idle",            "clawd-idle.gif"),
+    ("idle_reading",    "clawd-idle-reading.gif"),
+    ("bubble",          "clawd-bubble.gif"),
+    ("building",        "clawd-building.gif"),
+    ("typing",          "clawd-typing.gif"),
+    ("thinking",        "clawd-thinking.gif"),
+    ("sweeping",        "clawd-sweeping.gif"),
+    ("juggling",        "clawd-juggling.gif"),
+    ("carrying",        "clawd-carrying.gif"),
+    ("headphones",      "clawd-headphones-groove.gif"),
+    ("happy",           "clawd-happy.gif"),
+    ("notification",    "clawd-notification.gif"),
+    ("double_jump",     "clawd-react-double-jump.gif"),
+    ("annoyed",         "clawd-react-annoyed.gif"),
+    ("error",           "clawd-error.gif"),
+    ("sleeping",        "clawd-sleeping.gif"),
 ]
 
 def composite_frames(im):
@@ -107,13 +110,21 @@ def to_mono(rgba):
     return out
 
 def fit_centered(mono, size):
-    """Place mono into a size x size canvas keeping aspect, centered."""
+    """Place mono into a size x size canvas keeping aspect.
+
+    Bottom-aligned vertically so the character's "feet" sit at a consistent
+    line across all sprites. Animations that have stuff above the character
+    (sparkles, thought bubbles, exclamation marks) reserve that headroom
+    upward instead of pushing the character down off-center.
+    """
     w, h = mono.size
     s = min(size / w, size / h)
     nw, nh = max(1, int(round(w * s))), max(1, int(round(h * s)))
     resized = mono.resize((nw, nh), Image.NEAREST)
     canvas = Image.new("1", (size, size), 1)  # white background
-    canvas.paste(resized, ((size - nw) // 2, (size - nh) // 2))
+    x_off = (size - nw) // 2
+    y_off = size - nh - 2   # bottom-aligned with 2 px floor padding
+    canvas.paste(resized, (x_off, y_off))
     return canvas
 
 def to_xbm_bytes(mono):

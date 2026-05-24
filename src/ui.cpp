@@ -38,9 +38,8 @@ SpriteId moodToSprite() {
 // When connected and genuinely idle (no sessions, no prompt) for a while,
 // cycle through ALL animations on the main view so you can preview them.
 SpriteId showcaseSprite() {
-  // Showcase order roughly matches the lifecycle: wake → think → build →
-  // ship → celebrate → rest. The reading/bubble/sweeping variants drop in
-  // between for visual variety.
+  // Lifecycle order: wake → think → build → ship → celebrate → rest.
+  // All 16 sprites in the rotation; ~5 s each so the full cycle is ~80 s.
   static const SpriteId cycle[] = {
     SPR_IDLE,
     SPR_IDLE_READING,
@@ -48,9 +47,12 @@ SpriteId showcaseSprite() {
     SPR_THINKING,
     SPR_TYPING,
     SPR_BUILDING,
+    SPR_CARRYING,
     SPR_JUGGLING,
+    SPR_HEADPHONES,
     SPR_SWEEPING,
     SPR_NOTIFICATION,
+    SPR_ANNOYED,
     SPR_HAPPY,
     SPR_DOUBLE_JUMP,
     SPR_ERROR,
@@ -75,14 +77,17 @@ const char *moodLabel(SpriteId s) {
     case SPR_SLEEPING:     return "OFFLINE";
     case SPR_IDLE:         return "READY";
     case SPR_IDLE_READING: return "READING";
-    case SPR_BUBBLE:       return "THINKING";
+    case SPR_BUBBLE:       return "MUSING";
     case SPR_BUILDING:     return "WORKING";
     case SPR_TYPING:       return "TYPING";
     case SPR_THINKING:     return "THINKING";
     case SPR_SWEEPING:     return "COMPACT";
     case SPR_JUGGLING:     return "JUGGLING";
+    case SPR_CARRYING:     return "MOVING";
+    case SPR_HEADPHONES:   return "GROOVING";
     case SPR_HAPPY:        return "DONE";
     case SPR_DOUBLE_JUMP:  return "CELEBRATE";
+    case SPR_ANNOYED:      return "ANNOYED";
     case SPR_ERROR:        return "ERROR";
     case SPR_NOTIFICATION: return "APPROVE?";
     default:               return "";
@@ -521,18 +526,25 @@ static String fmtWeeklyReset() {
   return String("Thu 5:00 AM");
 }
 
-// --- Usage view: dense, claude.ai-style layout ---
+// --- Usage view: split into authoritative protocol numbers vs local estimates ---
+//
+// Honest data-sourcing:
+//  * `tokens`         — comes from desktop app heartbeat, cumulative output
+//                       tokens since desktop app started.
+//  * `tokens_today`   — desktop app, since local midnight.
+//  * `tokens_1h/5h`   — LOCAL ROLLING ESTIMATE from 300 one-minute samples
+//                       since this device booted.
+//
+// We do NOT receive Anthropic's real subscription quota over BLE, so any
+// "5h limit %" we'd show would be fake. Tell the user to run `/usage` in
+// Claude Code for authoritative numbers.
 void drawUsageView() {
   // Header strip
   u->setDrawColor(1);
   u->drawBox(0, TOP_H, W, 24);
   u->setDrawColor(0);
   u->setFont(u8g2_font_helvB14_tf);
-  const char *t1 = "Plan usage limits";
-  u->drawStr(8, TOP_H + 17, t1);
-  int t1w = u->getStrWidth(t1);
-  u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(8 + t1w + 14, TOP_H + 17, "Max (5x) *");
+  u->drawStr(8, TOP_H + 17, "Token usage");
   // right side: current time
   if (g_state.time_sync_ms) {
     uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
@@ -541,104 +553,85 @@ void drawUsageView() {
     int mm = (local / 60) % 60;
     char buf[16];
     snprintf(buf, sizeof(buf), "%02d:%02d", hh, mm);
+    u->setFont(u8g2_font_helvB14_tf);
     int tw = u->getStrWidth(buf);
     u->drawStr(W - tw - 8, TOP_H + 17, buf);
   }
   u->setDrawColor(1);
 
-  // Layout: each row = label/subtitle on left, bar across middle, % + reset on right.
-  int y = TOP_H + 32;
+  int y = TOP_H + 36;
+  char buf[80];
 
-  constexpr unsigned long BUDGET_5H_MAX     = 500000UL;  // Max(5x) rough 5h envelope
-  constexpr unsigned long BUDGET_WEEK_ALL   = 5000000UL; // weekly all-model envelope
-  constexpr unsigned long BUDGET_WEEK_SON   = 2000000UL; // weekly Sonnet envelope
+  // ===== Section 1: from desktop app (authoritative for the local app) =====
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(8, y, "From Claude desktop app");
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(160, y, "via BLE heartbeat");
+  u->drawHLine(8, y + 3, W - 16);
+  y += 14;
 
-  // Helper: draw one row.
-  auto drawRow = [&](const char *title,
-                     const char *subtitle,
-                     unsigned long used,
-                     unsigned long budget,
-                     bool show_subtitle = true) {
-    // Title
-    u->setFont(u8g2_font_helvB12_tf);
-    u->drawStr(8, y + 10, title);
-    if (show_subtitle && subtitle) {
-      u->setFont(u8g2_font_6x10_tf);
-      u->drawStr(8, y + 22, subtitle);
-    }
-    // pct
-    int pct = budget ? (int)((uint64_t)used * 100UL / budget) : 0;
-    if (pct > 100) pct = 100;
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%d%% used", pct);
-    u->setFont(u8g2_font_6x13B_tf);
-    int tw = u->getStrWidth(buf);
-    u->drawStr(W - tw - 8, y + 10, buf);
-    // bar
-    int bar_x = 8;
-    int bar_y = y + 26;
-    int bar_w = W - 16;
-    drawProgressBar(bar_x, bar_y, bar_w, 6, pct);
-    y += 38;
-  };
+  // session
+  u->setFont(u8g2_font_7x13_tf);
+  u->drawStr(20, y + 10, "session");
+  u->setFont(u8g2_font_logisoso24_tr);
+  String s = fmtTokens(g_state.tokens);
+  u->drawStr(110, y + 18, s.c_str());
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(110, y + 30, "tokens since desktop app started");
+  y += 38;
 
-  // ---- Current session (5h) ----
-  int32_t secs_5h_remain = 5 * 3600 - 1; // approx — without protocol value, show "rolling"
-  (void)secs_5h_remain;
-  char sub_session[40];
-  snprintf(sub_session, sizeof(sub_session), "Resets: rolling 5h window");
-  drawRow("Current session", sub_session,
-          g_state.tokens_5h, BUDGET_5H_MAX);
-
-  // ---- Today ----
-  char sub_today[40] = "Resets at local midnight";
+  // today
+  u->setFont(u8g2_font_7x13_tf);
+  u->drawStr(20, y + 10, "today");
+  u->setFont(u8g2_font_logisoso24_tr);
+  s = fmtTokens(g_state.tokens_today);
+  u->drawStr(110, y + 18, s.c_str());
+  u->setFont(u8g2_font_6x10_tf);
+  // reset countdown
   int32_t secs_mid = secsToMidnight();
   if (secs_mid > 0) {
     int h = secs_mid / 3600, m = (secs_mid / 60) % 60;
-    if (h > 0) snprintf(sub_today, sizeof(sub_today), "Resets in %dh %02dm", h, m);
-    else       snprintf(sub_today, sizeof(sub_today), "Resets in %dm", m);
-  }
-  drawRow("Today", sub_today,
-          g_state.tokens_today, 1000000UL);
+    snprintf(buf, sizeof(buf), "tokens since midnight  -  resets in %dh %02dm", h, m);
+  } else strcpy(buf, "tokens since local midnight");
+  u->drawStr(110, y + 30, buf);
+  y += 38;
 
-  // ---- Weekly limits section ----
-  u->setFont(u8g2_font_helvB12_tf);
-  u->drawStr(8, y + 10, "Weekly limits");
+  // ===== Section 2: local estimates =====
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(8, y, "Local estimates");
   u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(106, y + 10, "* local estimates, not Anthropic's quota");
-  y += 16;
+  u->drawStr(120, y, "from this device's clock, not Anthropic's quota");
+  u->drawHLine(8, y + 3, W - 16);
+  y += 14;
 
-  // All models
-  String wk_reset = "Resets " + fmtWeeklyReset();
-  drawRow("All models", wk_reset.c_str(),
-          g_state.tokens_today, BUDGET_WEEK_ALL);
+  // 2 columns: 1h | 5h | rate
+  auto stat = [&](int col, const char *label, const char *value, const char *unit) {
+    int cw = (W - 16) / 3;
+    int x = 8 + col * cw;
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(x, y, label);
+    u->setFont(u8g2_font_logisoso24_tr);
+    u->drawStr(x, y + 26, value);
+    u->setFont(u8g2_font_6x10_tf);
+    u->drawStr(x, y + 38, unit);
+  };
 
-  // Sonnet only (we don't know per-model; treat session tokens as Sonnet proxy)
-  drawRow("Sonnet only", wk_reset.c_str(),
-          g_state.tokens, BUDGET_WEEK_SON);
+  char b1[16], b2[16], b3[16];
+  fmtThousands(g_state.tokens_1h, b1, sizeof(b1));
+  fmtThousands(g_state.tokens_5h, b2, sizeof(b2));
+  snprintf(b3, sizeof(b3), "%lu", g_state.tokens_1h / 60UL);
+  stat(0, "last 1h",  b1, "tokens");
+  stat(1, "last 5h",  b2, "tokens");
+  stat(2, "avg rate", b3, "tokens / min");
+  y += 46;
 
-  // ---- Footer with detail numbers ----
-  u->drawHLine(6, y + 2, W - 12);
+  // ===== Footer: emphatic redirect to /usage =====
+  u->drawHLine(8, y, W - 16);
   y += 12;
   u->setFont(u8g2_font_6x10_tf);
-  char tbuf[16], tbuf2[16], tbuf3[16], tbuf4[16];
-  fmtThousands(g_state.tokens, tbuf, sizeof(tbuf));
-  fmtThousands(g_state.tokens_today, tbuf2, sizeof(tbuf2));
-  fmtThousands(g_state.tokens_1h, tbuf3, sizeof(tbuf3));
-  fmtThousands(g_state.tokens_5h, tbuf4, sizeof(tbuf4));
-  char fbuf[140];
-  snprintf(fbuf, sizeof(fbuf),
-           "raw: session %s   today %s   1h %s   5h %s",
-           tbuf, tbuf2, tbuf3, tbuf4);
-  u->drawStr(8, y, fbuf);
+  u->drawStr(8, y, "For real subscription quota (Max 5x, weekly limits, per-model),");
   y += 11;
-  snprintf(fbuf, sizeof(fbuf),
-           "appr %lu  deny %lu  sessions %d (run %d / wait %d)  turns %lu",
-           (unsigned long)g_state.approvals,
-           (unsigned long)g_state.denies,
-           g_state.total, g_state.running, g_state.waiting,
-           (unsigned long)g_state.turns_done);
-  u->drawStr(8, y, fbuf);
+  u->drawStr(8, y, "run /usage in Claude Code - the BLE protocol does not expose it.");
 }
 
 // Format bytes with KB/MB unit.
