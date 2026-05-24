@@ -526,112 +526,125 @@ static String fmtWeeklyReset() {
   return String("Thu 5:00 AM");
 }
 
-// --- Usage view: split into authoritative protocol numbers vs local estimates ---
+// --- Usage view: three-row progress-bar layout matching Claude Code /usage ---
 //
-// Honest data-sourcing:
-//  * `tokens`         — comes from desktop app heartbeat, cumulative output
-//                       tokens since desktop app started.
-//  * `tokens_today`   — desktop app, since local midnight.
-//  * `tokens_1h/5h`   — LOCAL ROLLING ESTIMATE from 300 one-minute samples
-//                       since this device booted.
+// Each row has an explicit "source:" subtitle so it's always obvious where
+// the number came from. We never fabricate percentages: if a row's data
+// isn't exposed by the BLE protocol, the bar stays empty and the value
+// reads "n/a".
 //
-// We do NOT receive Anthropic's real subscription quota over BLE, so any
-// "5h limit %" we'd show would be fake. Tell the user to run `/usage` in
-// Claude Code for authoritative numbers.
+//   Row 1: 5-hour limit     — local rolling 5h window from tokens samples
+//   Row 2: Weekly all       — n/a (BLE heartbeat has no weekly aggregate)
+//   Row 3: Sonnet only      — n/a (no per-model split in protocol)
+//
 void drawUsageView() {
-  // Header strip
+  // Header
   u->setDrawColor(1);
-  u->drawBox(0, TOP_H, W, 24);
+  u->drawBox(0, TOP_H, W, 22);
   u->setDrawColor(0);
   u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(8, TOP_H + 17, "Token usage");
-  // right side: current time
+  u->drawStr(8, TOP_H + 16, "Plan usage");
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(108, TOP_H + 16, "(run /usage for authoritative)");
   if (g_state.time_sync_ms) {
     uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
     uint32_t local = g_state.time_epoch + elapsed + g_state.time_offset_sec;
     int hh = (local / 3600) % 24;
     int mm = (local / 60) % 60;
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d:%02d", hh, mm);
+    char b[8];
+    snprintf(b, sizeof(b), "%02d:%02d", hh, mm);
     u->setFont(u8g2_font_helvB14_tf);
-    int tw = u->getStrWidth(buf);
-    u->drawStr(W - tw - 8, TOP_H + 17, buf);
+    int tw = u->getStrWidth(b);
+    u->drawStr(W - tw - 8, TOP_H + 16, b);
   }
   u->setDrawColor(1);
 
-  int y = TOP_H + 36;
-  char buf[80];
+  int y = TOP_H + 30;
 
-  // ===== Section 1: from desktop app (authoritative for the local app) =====
-  u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(8, y, "From Claude desktop app");
-  u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(160, y, "via BLE heartbeat");
-  u->drawHLine(8, y + 3, W - 16);
-  y += 14;
+  // Row primitive. value < 0 => n/a (no bar fill, "n/a" displayed).
+  auto row = [&](const char *title,
+                 int pct,                    // -1 = unknown / n/a
+                 const char *right_hint,     // e.g. "resets 4h" or "n/a"
+                 const char *source) {
+    // Title left, percent+hint right
+    u->setFont(u8g2_font_helvB12_tf);
+    u->drawStr(8, y + 11, title);
 
-  // session
-  u->setFont(u8g2_font_7x13_tf);
-  u->drawStr(20, y + 10, "session");
-  u->setFont(u8g2_font_logisoso24_tr);
-  String s = fmtTokens(g_state.tokens);
-  u->drawStr(110, y + 18, s.c_str());
-  u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(110, y + 30, "tokens since desktop app started");
-  y += 38;
+    char buf[40];
+    if (pct < 0) snprintf(buf, sizeof(buf), "n/a  %s", right_hint);
+    else         snprintf(buf, sizeof(buf), "%d%%  %s", pct, right_hint);
+    u->setFont(u8g2_font_6x13B_tf);
+    int tw = u->getStrWidth(buf);
+    u->drawStr(W - tw - 8, y + 11, buf);
 
-  // today
-  u->setFont(u8g2_font_7x13_tf);
-  u->drawStr(20, y + 10, "today");
-  u->setFont(u8g2_font_logisoso24_tr);
-  s = fmtTokens(g_state.tokens_today);
-  u->drawStr(110, y + 18, s.c_str());
-  u->setFont(u8g2_font_6x10_tf);
-  // reset countdown
-  int32_t secs_mid = secsToMidnight();
-  if (secs_mid > 0) {
-    int h = secs_mid / 3600, m = (secs_mid / 60) % 60;
-    snprintf(buf, sizeof(buf), "tokens since midnight  -  resets in %dh %02dm", h, m);
-  } else strcpy(buf, "tokens since local midnight");
-  u->drawStr(110, y + 30, buf);
-  y += 38;
+    // Thin progress bar
+    int bx = 8, by = y + 18, bw = W - 16, bh = 4;
+    u->drawFrame(bx, by, bw, bh);
+    if (pct > 0) {
+      int fw = (bw - 2) * pct / 100;
+      if (fw > 0) u->drawBox(bx + 1, by + 1, fw, bh - 2);
+    }
 
-  // ===== Section 2: local estimates =====
-  u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(8, y, "Local estimates");
-  u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(120, y, "from this device's clock, not Anthropic's quota");
-  u->drawHLine(8, y + 3, W - 16);
-  y += 14;
-
-  // 2 columns: 1h | 5h | rate
-  auto stat = [&](int col, const char *label, const char *value, const char *unit) {
-    int cw = (W - 16) / 3;
-    int x = 8 + col * cw;
+    // Source attribution under bar
     u->setFont(u8g2_font_6x10_tf);
-    u->drawStr(x, y, label);
-    u->setFont(u8g2_font_logisoso24_tr);
-    u->drawStr(x, y + 26, value);
-    u->setFont(u8g2_font_6x10_tf);
-    u->drawStr(x, y + 38, unit);
+    u->drawStr(8, y + 33, "source: ");
+    u->drawStr(8 + 42, y + 33, source);
+
+    y += 40;
   };
 
-  char b1[16], b2[16], b3[16];
-  fmtThousands(g_state.tokens_1h, b1, sizeof(b1));
-  fmtThousands(g_state.tokens_5h, b2, sizeof(b2));
-  snprintf(b3, sizeof(b3), "%lu", g_state.tokens_1h / 60UL);
-  stat(0, "last 1h",  b1, "tokens");
-  stat(1, "last 5h",  b2, "tokens");
-  stat(2, "avg rate", b3, "tokens / min");
-  y += 46;
+  // ---- Row 1: 5-hour limit ----
+  // Source we DO have: tokens_5h (300 one-minute samples since boot).
+  // Compare against an assumed Max-5x envelope of 500K so the bar moves.
+  // The "resets" value is just the rolling-window age: 5h from oldest sample.
+  constexpr unsigned long BUDGET_5H = 500000UL;
+  int pct_5h = (int)((uint64_t)g_state.tokens_5h * 100UL / BUDGET_5H);
+  if (pct_5h > 100) pct_5h = 100;
+  char reset_5h[16] = "resets 5h*";
+  row("5-hour limit", pct_5h, reset_5h,
+      "tokens_5h / 500K est (* rolling window)");
 
-  // ===== Footer: emphatic redirect to /usage =====
+  // ---- Row 2: Weekly all models ----
+  // Not in the BLE protocol. Show n/a.
+  row("Weekly  all models", -1, "n/a",
+      "not in BLE protocol");
+
+  // ---- Row 3: Sonnet only ----
+  // Protocol has no per-model breakdown.
+  row("Sonnet only", -1, "n/a",
+      "no per-model split in protocol");
+
+  // ---- Authoritative session block (these ARE real numbers) ----
+  y += 4;
   u->drawHLine(8, y, W - 16);
   y += 12;
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(8, y, "Session usage");
   u->setFont(u8g2_font_6x10_tf);
-  u->drawStr(8, y, "For real subscription quota (Max 5x, weekly limits, per-model),");
+  u->drawStr(116, y, "from BLE heartbeat (authoritative)");
+  y += 14;
+
+  char b1[24], b2[24];
+  fmtThousands(g_state.tokens, b1, sizeof(b1));
+  fmtThousands(g_state.tokens_today, b2, sizeof(b2));
+  int32_t mid = secsToMidnight();
+  char buf[120];
+  if (mid > 0) {
+    snprintf(buf, sizeof(buf),
+             "session %s tok   today %s tok   midnight in %dh %02dm",
+             b1, b2, (int)(mid / 3600), (int)((mid / 60) % 60));
+  } else {
+    snprintf(buf, sizeof(buf), "session %s tok   today %s tok", b1, b2);
+  }
+  u->drawStr(8, y, buf);
   y += 11;
-  u->drawStr(8, y, "run /usage in Claude Code - the BLE protocol does not expose it.");
+  snprintf(buf, sizeof(buf),
+           "approvals %lu   denies %lu   turns %lu   sessions %d",
+           (unsigned long)g_state.approvals,
+           (unsigned long)g_state.denies,
+           (unsigned long)g_state.turns_done,
+           g_state.total);
+  u->drawStr(8, y, buf);
 }
 
 // Format bytes with KB/MB unit.
