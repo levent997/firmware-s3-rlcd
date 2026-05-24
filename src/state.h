@@ -74,6 +74,15 @@ struct BuddyState {
   uint32_t last_turn_ms = 0;       // last time we saw a completion
   uint32_t last_activity_ms = 0;   // last time we saw running/waiting > 0 or new msg
   uint32_t turns_done = 0;         // local counter of completed turns this boot
+
+  // Velocity ring buffer: response time (seconds) for the last 8 approvals.
+  // Mirrors the M5StickC reference firmware's stats.velocity[].
+  uint16_t velocity[8] = {0};
+  uint8_t  velocity_idx = 0;
+  uint8_t  velocity_count = 0;
+
+  // When the current prompt first appeared (millis), to compute response time.
+  uint32_t prompt_started_ms = 0;
 };
 
 constexpr uint32_t TOKENS_PER_LEVEL = 50000;

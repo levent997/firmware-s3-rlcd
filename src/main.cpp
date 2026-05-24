@@ -54,18 +54,30 @@ void loop() {
   }
 
   // Buttons:
-  //   KEY  short  = next view  (forward through 3 views)
-  //   BOOT short  = prev view  (backward)
-  //   long-press: reserved for future use
+  //   With an active permission prompt:
+  //     KEY  short = approve   BOOT short = deny
+  //     long-press of either   = ignore approval, navigate views (escape)
+  //   Otherwise:
+  //     KEY  short = next view    BOOT short = prev view
+  //
   // Note: hardware has a 3rd physical button (power) wired to the ETA6098
-  // PMIC's OUTH/KEY pin, not to a GPIO — it cannot be read from firmware.
+  // PMIC's OUTH/KEY pin, not a GPIO — it cannot be read from firmware.
   buttons::Event ev = buttons::poll();
-  if (ev == buttons::KEY_SHORT) {
-    g_state.view = (g_state.view + 1) % 3;
-    Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
-  } else if (ev == buttons::BOOT_SHORT) {
-    g_state.view = (g_state.view + 2) % 3;
-    Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
+  if (ev != buttons::NONE) {
+    bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
+    if (active_prompt && ev == buttons::KEY_SHORT) {
+      Serial.printf("[approval] %s APPROVE\n", g_state.prompt.id.c_str());
+      protocol::sendPermission(g_state.prompt.id, true);
+    } else if (active_prompt && ev == buttons::BOOT_SHORT) {
+      Serial.printf("[approval] %s DENY\n", g_state.prompt.id.c_str());
+      protocol::sendPermission(g_state.prompt.id, false);
+    } else if (ev == buttons::KEY_SHORT || ev == buttons::KEY_LONG) {
+      g_state.view = (g_state.view + 1) % 3;
+      Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);
+    } else if (ev == buttons::BOOT_SHORT || ev == buttons::BOOT_LONG) {
+      g_state.view = (g_state.view + 2) % 3;
+      Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
+    }
   }
 
   // Tamagotchi stats — aligned with the M5StickC reference firmware

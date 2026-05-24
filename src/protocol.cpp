@@ -144,8 +144,14 @@ void handleHeartbeat(JsonDocument &d) {
 
   JsonVariant pr = d["prompt"];
   if (!pr.isNull()) {
+    String new_id = String((const char *)(pr["id"] | ""));
+    // Reset the timer only when the prompt id changes — repeated heartbeats
+    // carrying the same prompt shouldn't reset response timing.
+    if (!g_state.prompt.active || g_state.prompt.id != new_id) {
+      g_state.prompt_started_ms = millis();
+    }
     g_state.prompt.active = true;
-    g_state.prompt.id = String((const char *)(pr["id"] | ""));
+    g_state.prompt.id = new_id;
     g_state.prompt.tool = asciiOnly(pr["tool"] | "");
     g_state.prompt.hint = asciiOnly(pr["hint"] | "");
   } else {
@@ -214,7 +220,21 @@ void protocol::sendPermission(const String &id, bool approve) {
   String s;
   serializeJson(d, s);
   ble_nus::sendLine(s);
+
   if (approve) g_state.approvals++;
-  else g_state.denies++;
+  else         g_state.denies++;
+
+  // Record response time into the velocity ring buffer (matches official
+  // src/stats.h::statsOnApproval). Capped at uint16_t max.
+  if (g_state.prompt_started_ms) {
+    uint32_t secs = (millis() - g_state.prompt_started_ms) / 1000U;
+    if (secs > 65535U) secs = 65535U;
+    g_state.velocity[g_state.velocity_idx] = (uint16_t)secs;
+    g_state.velocity_idx = (g_state.velocity_idx + 1) % 8;
+    if (g_state.velocity_count < 8) g_state.velocity_count++;
+  }
+  g_state.prompt_started_ms = 0;
+  g_state.prompt.active = false;
+
   persist::onApprovalOrDenial();
 }

@@ -249,18 +249,25 @@ void drawBottomBar() {
   u->setDrawColor(1);
   u->drawHLine(0, H - BOT_H, W);
   u->setFont(u8g2_font_6x10_tf);
-  const char *title;
-  switch (g_state.view) {
-    case 0: title = "MAIN";   break;
-    case 1: title = "USAGE";  break;
-    case 2: title = "SYSTEM"; break;
-    default: title = "?";
+
+  bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
+  char left[80];
+  if (active_prompt) {
+    snprintf(left, sizeof(left),
+             "[KEY] APPROVE   [BOOT] DENY   (long-press = ignore + nav)");
+  } else {
+    const char *title;
+    switch (g_state.view) {
+      case 0: title = "MAIN";   break;
+      case 1: title = "USAGE";  break;
+      case 2: title = "SYSTEM"; break;
+      default: title = "?";
+    }
+    snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
+             title, (unsigned)(g_state.view + 1));
   }
-  char left[64];
-  snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
-           title, (unsigned)(g_state.view + 1));
   u->drawStr(6, H - 5, left);
-  // BLE state indicator on right
+
   const char *r = ble_nus::connected() ? "BLE: connected" : "BLE: advertising";
   int rw = u->getStrWidth(r);
   u->drawStr(W - rw - 6, H - 5, r);
@@ -330,8 +337,81 @@ static void drawPips(int x, int y, int n, int filled, int radius, int spacing) {
   }
 }
 
+// Full-screen approval view used when prompt.active. The MAIN dashboard is
+// replaced entirely so the prompt is impossible to miss. KEY approves,
+// BOOT denies, either long-press escapes to view navigation.
+static void drawApprovalView() {
+  // Notification sprite on the left
+  drawSprite(8, TOP_H + 4, SPR_NOTIFICATION);
+
+  // Title pill below sprite
+  int pill_y = TOP_H + 4 + SPRITE_H + 4;
+  u->setDrawColor(1);
+  u->drawRBox(8, pill_y, SPRITE_W, 22, 4);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  const char *label = "APPROVE?";
+  int lw = u->getStrWidth(label);
+  u->drawStr(8 + (SPRITE_W - lw) / 2, pill_y + 16, label);
+  u->setDrawColor(1);
+
+  // Right column: huge title + tool + hint + timer
+  int rx = 8 + SPRITE_W + 14;
+  int ry = TOP_H + 4;
+
+  u->setFont(u8g2_font_logisoso28_tr);
+  u->drawStr(rx, ry + 28, "APPROVE?");
+  ry += 42;
+
+  u->setFont(u8g2_font_helvB14_tf);
+  String tool = "Tool: " + (g_state.prompt.tool.length() ? g_state.prompt.tool : String("(unknown)"));
+  u->drawStr(rx, ry, tool.c_str());
+  ry += 18;
+
+  // Hint, wrapped over multiple lines
+  u->setFont(u8g2_font_7x13_tf);
+  drawWrappedText(rx, ry, W - rx - 8, 14, g_state.prompt.hint, 5);
+  ry += 14 * 5 + 6;
+
+  // Timer (how long the prompt has been waiting)
+  uint32_t secs = g_state.prompt_started_ms
+                  ? (millis() - g_state.prompt_started_ms) / 1000
+                  : 0;
+  char timer[24];
+  snprintf(timer, sizeof(timer), "waiting %lus", (unsigned long)secs);
+  u->setFont(u8g2_font_helvB14_tf);
+  u->drawStr(rx, ry, timer);
+
+  // Big visual key hints centred along the bottom of the content area.
+  int hy = H - BOT_H - 38;
+  int half = (W - 24) / 2;
+
+  // KEY = APPROVE — solid inverse box
+  u->setDrawColor(1);
+  u->drawRBox(8, hy, half, 28, 6);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  const char *a = "[KEY] APPROVE";
+  int aw = u->getStrWidth(a);
+  u->drawStr(8 + (half - aw) / 2, hy + 19, a);
+  u->setDrawColor(1);
+
+  // BOOT = DENY — outlined box
+  u->drawRFrame(W - 8 - half, hy, half, 28, 6);
+  const char *dn = "[BOOT] DENY";
+  int dnw = u->getStrWidth(dn);
+  u->drawStr(W - 8 - half + (half - dnw) / 2, hy + 19, dn);
+}
+
 // --- Main view: dashboard layout ---
 void drawMainView() {
+  // Active permission prompt fully overrides the dashboard so it can't be
+  // missed. Long-press of either button still navigates views as an escape.
+  if (g_state.prompt.active && g_state.prompt.id.length()) {
+    drawApprovalView();
+    return;
+  }
+
   bool idle_carousel = inShowcase();
   SpriteId mood = idle_carousel ? showcaseSprite() : moodToSprite();
 

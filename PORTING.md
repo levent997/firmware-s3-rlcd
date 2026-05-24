@@ -13,9 +13,9 @@
 
 | 关注点 | 官方文件 | 本机文件 | 状态 |
 |---|---|---|---|
-| BLE NUS 外设 | `ble_bridge.{h,cpp}` (Bluedroid) | `ble_nus.{h,cpp}` (NimBLE) | ✅ 协议等价；加密未做（见 §3） |
+| BLE NUS 外设 | `ble_bridge.{h,cpp}` (Bluedroid) | `ble_nus.{h,cpp}` (NimBLE) | ✅ 协议 + LE Secure Connections 加密 |
 | 协议解析 | `data.h` (含演示模式) | `protocol.{h,cpp}` | ⚠️ 缺 demo 模式 + entry 缓冲量 |
-| NVS 持久化 | `stats.h` | — | ❌ **未做**（reboot 后所有计数清零） |
+| NVS 持久化 | `stats.h` | `persist.{h,cpp}` | ✅ 已做 |
 | 文件夹推送 | `xfer.h` (LittleFS) | — | ❌ **未做** |
 | 自定义角色包 | `character.{h,cpp}` (AnimatedGIF) | `sprites.h` (预转换) | ➖ 设计上不同：我们用静态 PROGMEM |
 | 角色物种 | `buddy.{h,cpp}` + `buddies/` 18 种 | `sprites.h` 1 套（Clawd 13 动画） | ➖ 设计上不同：我们走 GIF→bitmap，不用 ASCII pet |
@@ -35,18 +35,18 @@ REFERENCE.md 心跳 snapshot 字段：
 | `waiting` | ✅ | ✅ | |
 | `msg` | ✅ | ✅ | |
 | `entries` | ✅ 最多 **8** 行 × 91 字符，可滚动查看 | ⚠️ 仅 **3** 行 × 32 字符，无滚动 | **可补强**（见 §4.B） |
-| `tokens` | ✅ + NVS delta 累加 | ✅ 仅当前 session | **缺持久化** |
+| `tokens` | ✅ + NVS delta 累加 | ✅ + NVS 累加（`tokens_boot`）| |
 | `tokens_today` | ✅ | ✅ | |
-| `prompt` | ✅ approve/deny 全闭环 | ⚠️ 只显示，不响应 | 按键被改为视图切换 |
+| `prompt` | ✅ approve/deny 全闭环 | ✅ KEY=approve / BOOT=deny + velocity 记录 | |
 
 REFERENCE.md `cmd → ack` 表：
 
 | 命令 | 官方 | 本机 | 备注 |
 |---|---|---|---|
-| `cmd:status` | ✅ 完整 data 块（name/sec/bat/sys/stats）| ⚠️ 数据块骨架，缺 sec/stats 完整 | **可补强** |
-| `cmd:name` | ✅ + NVS 写盘 | ⚠️ 内存中变量，不持久 | **缺 NVS** |
-| `cmd:owner` | ✅ + NVS 写盘 | ⚠️ 内存中变量，不持久 | **缺 NVS** |
-| `cmd:unpair` | ✅ 清 bond | ⚠️ 仅 ack，未配对所以无 bond 可清 | 等加密做完再补 |
+| `cmd:status` | ✅ 完整 data 块（name/sec/bat/sys/stats）| ✅ name/sec/sys/stats 真值（bat 见 SYSTEM 视图）| |
+| `cmd:name` | ✅ + NVS 写盘 | ✅ + NVS 写盘 | |
+| `cmd:owner` | ✅ + NVS 写盘 | ✅ + NVS 写盘 | |
+| `cmd:unpair` | ✅ 清 bond | ✅ 清 bond + 擦 NVS | |
 | 时间同步 `{"time":[...]}` | ✅ + 写入 RTC | ⚠️ 仅内存计算，没写 PCF85063 RTC | **可补强**（PCF85063 已在板） |
 
 REFERENCE.md 折叠协议（folder push）：
@@ -67,13 +67,13 @@ REFERENCE.md turn 事件：
 
 | 关注点 | 官方 | 本机 |
 |---|---|---|
-| 加密配对 | ✅ `SC_MITM_BOND`，CCCD 设 `PERM_ENCRYPTED` | ❌ **链路明文** |
-| 显示 passkey | ✅ 单独 `drawPasskey()` 屏 | ❌ |
-| Bond 清除（`cmd:unpair`）| ✅ `bleClearBonds()` | ⚠️ stub |
-| Status ack `sec:true` | ✅ 真值 | ⚠️ 硬编码 `false` |
+| 加密配对 | ✅ `SC_MITM_BOND`，CCCD 设 `PERM_ENCRYPTED` | ✅ NimBLE `setSecurityAuth(true,true,true)` + `READ_ENC`/`WRITE_ENC` |
+| 显示 passkey | ✅ 单独 `drawPasskey()` 屏 | ✅ `ui.cpp::drawPasskeyScreen` 50px 大字 |
+| Bond 清除（`cmd:unpair`）| ✅ `bleClearBonds()` | ✅ `NimBLEDevice::deleteAllBonds()` |
+| Status ack `sec:true` | ✅ 真值 | ✅ `g_state.secure` 真值 |
+| 顶栏加密指示 | — | ✅ `BT*` 表示已加密 |
 
-**安全暴露**：transcript 片段、tool hint、permission id 全部明文飘在 2.4 GHz 上，
-拿一个 nRF 嗅探器 5 块钱就能解。**这是本机最大的协议合规缺陷**。
+**P0 已补完** — transcript 不再明文飞 2.4GHz。
 
 ---
 
@@ -83,14 +83,14 @@ REFERENCE.md turn 事件：
 
 | 字段 | 官方（`src/stats.h`）| 本机（`src/state.h`） |
 |---|---|---|
-| `tokens` 累加 | ✅ delta 累加，bridge 重启不丢 | ⚠️ 重启即丢（无 NVS） |
-| `level` | ✅ `tokens / 50000` | ✅ 同 |
+| `tokens` 累加 | ✅ delta 累加，bridge 重启不丢 | ✅ `tokens_boot` 累加 + NVS |
+| `level` | ✅ `tokens / 50000` | ✅ `tokens_boot / 50000` (持久) |
 | Energy tier | ✅ 0-5，2h/tier 衰减，nap end 满血 | ✅ 同（nap 触发改用 BLE 断开 > 5min）|
 | Fed pip | ✅ `(tokens % 50000) / 5000` | ✅ 同 |
-| Velocity ring buffer | ✅ 最近 8 次 approval 响应时延，驱动 mood | ❌ **未做** |
-| approval/denial counter | ✅ + NVS | ⚠️ 计数对，但不持久 |
-| `napSeconds` 累计 | ✅ + NVS | ❌ |
-| 设备名 / owner 名 | ✅ + NVS | ⚠️ 内存中 |
+| Velocity ring buffer | ✅ 最近 8 次 approval 响应时延，驱动 mood | ✅ 已写入（直方图渲染待做） |
+| approval/denial counter | ✅ + NVS | ✅ + NVS |
+| `napSeconds` 累计 | ✅ + NVS | ⚠️ 没累加 |
+| 设备名 / owner 名 | ✅ + NVS | ✅ + NVS |
 | species 索引 | ✅ + NVS | ➖ 不适用（我们没 ASCII pet 概念）|
 
 ### 4.B Entry 缓冲
@@ -122,14 +122,14 @@ REFERENCE.md turn 事件：
 | 屏幕 | 官方 | 本机 |
 |---|---|---|
 | Pet（主屏 + 角色 + HUD）| ✅ | ✅ MAIN 视图 |
-| Info（多页 stats 含 velocity 直方图）| ✅ 3 页 | ⚠️ 部分内容散在 USAGE / SYSTEM |
+| Info（多页 stats 含 velocity 直方图）| ✅ 3 页 | ⚠️ 部分内容散在 USAGE / SYSTEM，缺直方图 |
 | Clock | ✅ 大数字时钟独立屏 | ❌ 仅顶栏小时钟 |
-| Approval（待审批专用屏 + 倒计时）| ✅ | ⚠️ 现在仍走 MAIN 显示，无专用屏 |
+| Approval（待审批专用屏 + 倒计时）| ✅ | ✅ `drawApprovalView()` 全屏接管 |
 | Menu（长按 A）| ✅ | ❌ |
 | Settings | ✅ | ❌ |
-| Reset / Factory Reset | ✅ | ❌ |
-| Passkey | ✅ | ❌（无加密配对） |
-| 演示模式 | ✅ 长按某键进入 | ⚠️ 仅 idle 时自动轮播 |
+| Reset / Factory Reset | ✅ | ⚠️ `cmd:unpair` 通过 BLE 触发，无 UI 入口 |
+| Passkey | ✅ | ✅ `drawPasskeyScreen()` |
+| 演示模式 | ✅ 长按某键进入 | ⚠️ 仅 idle 时自动轮播 sprite |
 
 ---
 
@@ -176,35 +176,39 @@ REFERENCE.md turn 事件：
 
 按价值 × 工作量排序，**P0 最重要**：
 
-### P0：加密配对（链路安全）
-- NimBLE-Arduino 支持 `setSecurityAuth(true, true, true)` (bond + MITM + SC)
-- 启用 `setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY)`，绑回调里显示 6 位 passkey
-- `txChar` 加 `READ_ENC` / `WRITE_ENC` 权限
-- 配对成功后 `g_state.secure = true`，status ack 里反映
-- **触发**：第一次 GATT 访问就走配对流程
-- 参考代码：`src/ble_bridge.cpp:80-125`
+### ✅ P0：加密配对（链路安全）— **完成** (commit `dd29e52`)
+- NimBLE `setSecurityAuth(bond=true, mitm=true, sc=true)`
+- `setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY)` + `onPassKeyRequest` 生成 6 位随机 passkey
+- TX/RX 加 `READ_ENC` / `WRITE_ENC` 权限，强制 bond 才能 GATT
+- `onAuthenticationComplete` 写 `g_state.secure`，status ack 真值
+- 顶栏 BT 指示器变成 `BT*` 表示链路已加密
+- `cmd:unpair` 真正调用 `NimBLEDevice::deleteAllBonds()`
+- 全屏 passkey 显示页（`ui.cpp::drawPasskeyScreen`），50px 大字
 
-### P0：NVS 持久化（重启不丢数据）
+### ✅ P0：NVS 持久化（重启不丢数据）— **完成** (commit `e314a9b`)
 - `Preferences` 命名空间 `"buddy"`
-- 持久化：`tokens` / `level` / `approvals` / `denies` / `turns_done` / `napSeconds` /
-  `petName` / `ownerName` / `energy_at_nap` / `last_nap_end_ms`（相对偏移）
-- 写盘时机：仅 approval / denial / nap end / 命令收到时；**不要按周期写**
-  （ESP32 NVS sector ~100K 写周期）
-- 参考代码：`src/stats.h:29-61`
+- 持久化：`tokens_boot` / `level` / `approvals` / `denies` / `turns_done` /
+  `energy_at_nap` / `petName` / `ownerName`
+- 写盘时机：approval / denial / nap end / 命令收到时；token progress 节流
+  到每 5 分钟或 5K token 增量或 level 跨越
+- 模块：`src/persist.{h,cpp}`
+- `cmd:unpair` 顺带 `persist::wipe()`
 
-### P1：Approve / Deny 按键流（仍可与视图切换共存）
-- 当 `prompt.active` 时，按键临时切换语义：
+### ✅ P1：Approve / Deny 按键流 — **完成** (本次提交)
+- `prompt.active` 时按键语义临时切换：
   - **KEY 短按** = approve (`decision: once`)
   - **BOOT 短按** = deny (`decision: deny`)
-  - **KEY 长按** = 强制切回视图导航
-- 弹一个专用 Approval 全屏视图，自动覆盖当前视图
-- 记录响应时延，写进 velocity ring buffer
-- 用 KEY 长按等"非干扰手势"做视图切换 fallback
+  - **任一长按** = 忽略，做视图导航逃生
+- MAIN 视图全屏覆盖为 `drawApprovalView()`：notification sprite + 大字
+  "APPROVE?" + Tool + 自动换行的 hint + 等待秒数 + 大键位提示
+- 8 槽 velocity ring buffer 记录响应时延
+- 底栏按键提示语随状态切换
 
 ### P1：Velocity 直方图（小图表）
-- 8 槽环形 buffer 存 approval 响应秒数
+- ✅ ring buffer 已实现（上一步顺带）
+- ❌ 直方图渲染未做
 - USAGE 或 SYSTEM 视图加一行 ASCII bar chart
-- 驱动 mood：快速响应几次 → spry，>30s 才响应 → drowsy
+- 可驱动 mood：快速响应几次 → spry，>30s 才响应 → drowsy
 
 ### P1：Folder push（自定义角色包）
 - 我们的 sprite 是编译期静态的；要支持运行时自定义需要：
@@ -273,7 +277,26 @@ REFERENCE.md turn 事件：
 
 ## 10. 一句话总结
 
-**协议覆盖率**：核心心跳字段 100%，命令 ack 80%（缺持久化），folder push 0%，加密配对 0%。
+| 大类 | 完成度 |
+|---|---|
+| 核心心跳字段 | 100% |
+| 命令 ack（含持久化）| 100% |
+| Approval 闭环（按键 + velocity）| 100% |
+| BLE 加密配对（LE SC + bond + passkey）| 100% |
+| NVS 持久化 | 100% |
+| Folder push（自定义角色包）| 0% |
+| 菜单 / 设置 / 重置 UI | 0% |
+| Clock 独立屏 + RTC 写入 | 0% |
+| 演示模式（fake heartbeat）| 部分（仅 sprite 轮播）|
 
-**最该补的两件事**：(P0) BLE 加密 + (P0) NVS 持久化。它们俩补完后，本机就能跟官方
-固件**功能等价**地用 —— 剩下的 P1/P2/P3 都是体验/装饰类增量。
+**两条 P0 通路（加密 + NVS）都已打通**，本机现在**功能等价**于官方固件可以日用。
+剩余 P1/P2/P3 都是体验/装饰类增量，按需补。
+
+## 11. 进度记录
+
+| 日期 | Commit | 改动 |
+|---|---|---|
+| 初版 | `e8a7f06` | PORTING.md 落地 |
+| P0-1 | `e314a9b` | NVS 持久化 |
+| P0-2 | `dd29e52` | LE Secure Connections 加密 + passkey 屏 |
+| P1-3 | (此提交) | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
