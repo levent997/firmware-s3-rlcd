@@ -330,4 +330,4 @@ REFERENCE.md turn 事件：
 | P2-7 | `8125b71` | PCF85063 RTC 驱动 + time sync 双向 |
 | P1-8a | `167f348` | LittleFS 分区 + char_* 状态机骨架 (stub) |
 | P1-8b | `64c417c` | 实际 LittleFS 写盘 + 路径校验 |
-| P1-8c | (此提交) | AnimatedGIF 运行时解码 -> sprite override |
+| P1-8c | `4aa36fe` | AnimatedGIF 运行时解码 -> sprite override |
