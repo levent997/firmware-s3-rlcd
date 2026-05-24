@@ -4,6 +4,7 @@
 #include "persist.h"
 #include "rtc.h"
 #include "xfer.h"
+#include "audio.h"
 #include <ArduinoJson.h>
 
 namespace {
@@ -140,7 +141,17 @@ void handleHeartbeat(JsonDocument &d) {
   g_state.running = d["running"] | 0;
   g_state.waiting = d["waiting"] | 0;
   updateTokenWindows(d["tokens"] | 0);
-  g_state.msg = asciiOnly(d["msg"] | "");
+  String new_msg = asciiOnly(d["msg"] | "");
+  // Audible buzz on transitions INTO an error message (don't spam on
+  // every heartbeat that repeats the same error).
+  {
+    String lc = new_msg; lc.toLowerCase();
+    String prev_lc = g_state.msg; prev_lc.toLowerCase();
+    bool now_err  = lc.indexOf("error") >= 0 || lc.indexOf("fail") >= 0;
+    bool prev_err = prev_lc.indexOf("error") >= 0 || prev_lc.indexOf("fail") >= 0;
+    if (now_err && !prev_err) audio::buzz();
+  }
+  g_state.msg = new_msg;
   g_state.tokens = d["tokens"] | 0;
   g_state.tokens_today = d["tokens_today"] | 0;
 
@@ -249,6 +260,11 @@ void protocol::sendPermission(const String &id, bool approve) {
   String s;
   serializeJson(d, s);
   ble_nus::sendLine(s);
+
+  // Audible confirmation. Different tones so the user knows which button
+  // they actually pressed without looking at the screen.
+  if (approve) audio::ding();
+  else         audio::buzz();
 
   if (approve) g_state.approvals++;
   else         g_state.denies++;

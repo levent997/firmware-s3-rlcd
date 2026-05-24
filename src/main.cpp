@@ -11,6 +11,7 @@
 #include "rtc.h"
 #include "xfer.h"
 #include "pack.h"
+#include "audio.h"
 
 BuddyState g_state;
 
@@ -34,6 +35,7 @@ void setup() {
   rtc::begin();
   xfer::begin();
   pack::init();
+  audio::begin();
   persist::load();
 
   // If the RTC has valid time (i.e. either VBAT was preserved across resets
