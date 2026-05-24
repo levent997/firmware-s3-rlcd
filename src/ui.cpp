@@ -140,8 +140,9 @@ void drawTopBar() {
     int fill = (g_state.battery_pct >= 0) ? (g_state.battery_pct * (bw - 2) / 100) : 0;
     if (fill > 0) u->drawBox(bx + 1, by + 1, fill, bh - 2);
 
-    // Lightning bolt overlay when charging (drawn in inverse, so the
-    // shape shows up regardless of fill level).
+    // Lightning bolt overlay when charging.
+    // The top bar is drawn white-on-black-via-inverse, so this whole block
+    // is running with setDrawColor(0). We must restore it after touching it.
     if (g_state.charging) {
       int cx = bx + bw / 2;
       int cy = by + bh / 2;
@@ -153,6 +154,7 @@ void drawTopBar() {
       u->drawLine(cx + 2, by + 1, cx - 1, cy);
       u->drawLine(cx - 1, cy,     cx + 1, cy);
       u->drawLine(cx + 1, cy,     cx - 2, by + bh - 2);
+      u->setDrawColor(0);   // restore for the rest of the top bar
     }
     x -= 10;
   }
@@ -790,17 +792,19 @@ void drawSystemView() {
 void drawOfflineHint() {
   // Overlay when not connected — show a subtle hint band over main view.
   if (ble_nus::connected()) return;
-  const int box_h = 20;
+  const int box_h = 18;
   int y = H - BOT_H - box_h - 2;
   u->setDrawColor(1);
   u->drawBox(0, y, W, box_h);
   u->setDrawColor(0);
-  // helvB12 reads cleaner than 6x13B at this size; variable spacing gives
-  // breathing room between letters when inverted.
-  u->setFont(u8g2_font_helvB12_tf);
+  // 7x13 fixed-width: 49 chars * 7 = 343 px, fits inside W=400 with margin.
+  // Wider variable fonts (helvB12) overflow the screen.
+  u->setFont(u8g2_font_7x13_tf);
   const char *t = "Open Hardware Buddy in Claude desktop and connect";
   int tw = u->getStrWidth(t);
-  u->drawStr((W - tw) / 2, y + 14, t);
+  int tx = (W - tw) / 2;
+  if (tx < 4) tx = 4;
+  u->drawStr(tx, y + 13, t);
   u->setDrawColor(1);
 }
 } // namespace
