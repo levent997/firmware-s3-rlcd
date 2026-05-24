@@ -323,4 +323,4 @@ REFERENCE.md turn 事件：
 | P2-5 | `b6fbf3a` | entries 缓冲 3→8 + 长按 history overlay |
 | P2-6 | `a41352a` | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |
 | 修 P2-6 | `c812c81` | demo 误退 + 底栏文字重叠修复 |
-| P2-7 | (此提交) | PCF85063 RTC 驱动 + time sync 双向 |
+| P2-7 | `8125b71` | PCF85063 RTC 驱动 + time sync 双向 |
