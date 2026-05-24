@@ -700,28 +700,41 @@ void drawMainView() {
 
   // 2x2 KPI grid (compact).
   //
-  // Each cell is ~123 px wide on a 400 px display. Label is the 6x10 font
-  // (6 px per char); value is 7x13B (7 px per char). The longest label
-  // here is "session" at 7 chars = 42 px, so the value column starts at
-  // x+50 to give a ~8 px gap. Value strings are kept <= 6 chars via the
-  // compact formatters above so 50 + 42 = 92 px stays inside the cell
-  // even at multi-million-token counts.
+  // Each cell is ~123 px wide on a 400 px display. Label is the 6x10 font;
+  // value is 7x13B. All labels here are <= 4 chars so a 36-px column is
+  // plenty; values are kept <= 6 chars via the compact formatters above.
+  //
+  // Labels were renamed in this revision to match what the heartbeat
+  // actually carries (per REFERENCE.md):
+  //   desk   = g_state.tokens       "output tokens since desktop app start"
+  //   today  = g_state.tokens_today "output tokens since local midnight"
+  //   rate   = g_state.tokens_1h / window_minutes   (window <= 60 min so
+  //                                                  cold-boot rates aren't
+  //                                                  divided by an empty hour)
+  //   up     = firmware uptime
   struct Kpi { const char *label; const char *value; };
   char b_tok[16], b_today[16], b_rate[16], b_up[16];
   fmtCompactTokens(g_state.tokens, b_tok, sizeof(b_tok));
   fmtCompactTokens(g_state.tokens_today, b_today, sizeof(b_today));
-  unsigned long tpm = g_state.tokens_1h / 60UL;
-  snprintf(b_rate, sizeof(b_rate), "%lu/min", tpm);
+  {
+    // Dynamic window: divide by the actual sampled span, not the nominal
+    // 60 minutes. Critical for the first hour of uptime, where dividing by
+    // 60 systematically reports a rate ~60x too low.
+    uint32_t uptime_min = millis() / 60000UL;
+    uint32_t win_min = uptime_min > 60 ? 60 : (uptime_min < 1 ? 1 : uptime_min);
+    unsigned long tpm = g_state.tokens_1h / win_min;
+    snprintf(b_rate, sizeof(b_rate), "%lu/min", tpm);
+  }
   fmtCompactDuration(millis() / 1000, b_up, sizeof(b_up));
 
   Kpi kpis[4] = {
-    {"session", b_tok},
-    {"today",   b_today},
-    {"rate",    b_rate},
-    {"uptime",  b_up},
+    {"desk",  b_tok},
+    {"today", b_today},
+    {"rate",  b_rate},
+    {"up",    b_up},
   };
   int col_w = (W - rx - 6) / 2;
-  constexpr int VAL_OFFSET = 50;   // x-offset for the value within each cell
+  constexpr int VAL_OFFSET = 38;   // x-offset for value within each cell
   for (int i = 0; i < 4; i++) {
     int col = i % 2, row = i / 2;
     int x = rx + col * col_w;
@@ -731,7 +744,12 @@ void drawMainView() {
     u->setFont(u8g2_font_7x13B_tf);
     u->drawStr(x + VAL_OFFSET, y, kpis[i].value);
   }
-  ry += 14 * 2 + 4;
+  ry += 14 * 2 + 2;
+
+  // Honest footnote — neither tokens field counts input/prompt bytes.
+  u->setFont(u8g2_font_5x7_tf);
+  u->drawStr(rx, ry + 6, "* output tokens only (input/prompt not counted)");
+  ry += 8;
 
   // ===== Bottom band: Recent activity =====
   int ey = pill_y + 28;

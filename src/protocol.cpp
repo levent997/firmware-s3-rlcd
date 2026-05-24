@@ -82,21 +82,29 @@ struct TokSample { uint32_t t_ms; uint32_t tokens_cum; };
 TokSample tok_hist[TOK_HISTORY];
 int tok_count = 0;
 int tok_head = 0;
-uint32_t last_tokens_seen = 0;
+// UINT32_MAX as sentinel: distinguishes "never seen a heartbeat" from
+// "last heartbeat was 0". Without this, the very first heartbeat after
+// firmware boot would add the desktop's full cumulative (e.g. 184502 tok)
+// to tokens_boot, falsely inflating the local level counter.
+uint32_t last_tokens_seen = UINT32_MAX;
 uint32_t last_sample_ms = 0;
 
 void updateTokenWindows(uint32_t tokens_now) {
   uint32_t now = millis();
 
-  // Detect resets (desktop restarted, tokens went down)
-  if (tokens_now < last_tokens_seen) {
-    last_tokens_seen = 0;
+  if (last_tokens_seen == UINT32_MAX) {
+    // First heartbeat after firmware boot — anchor without backfill.
+    last_tokens_seen = tokens_now;
+  } else if (tokens_now < last_tokens_seen) {
+    // Desktop restarted — re-anchor without counting the pre-restart
+    // value as new delta (was a bug: the old code added the post-restart
+    // cumulative to tokens_boot on every desktop restart).
+    last_tokens_seen = tokens_now;
+  } else {
+    uint32_t delta = tokens_now - last_tokens_seen;
+    if (delta > 0) g_state.tokens_boot += delta;
+    last_tokens_seen = tokens_now;
   }
-  uint32_t delta = tokens_now - last_tokens_seen;
-  if (delta > 0) {
-    g_state.tokens_boot += delta;
-  }
-  last_tokens_seen = tokens_now;
 
   // Sample at most once per minute.
   if (last_sample_ms != 0 && now - last_sample_ms < 60000) {
