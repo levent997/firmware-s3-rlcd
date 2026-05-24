@@ -4,6 +4,7 @@
 #include "sprites.h"
 #include "rtc.h"
 #include "xfer.h"
+#include "pack.h"
 #include <pgmspace.h>
 
 namespace {
@@ -143,12 +144,25 @@ uint32_t hashState() {
 }
 
 // --- Sprite blit ---
-// Pull one frame from PROGMEM into a local RAM buffer (1152 B), then drawXBM.
+// Runtime pack override wins over the built-in PROGMEM sprite. If the
+// active pack supplies frames for this slot, blit them directly from PSRAM
+// (no copy needed). Otherwise stage the PROGMEM frame through a RAM
+// scratch buffer and drawXBM that.
 void drawSprite(int x, int y, SpriteId id) {
+  if (pack::hasOverride(id)) {
+    uint8_t fc = pack::overrideFrameCount(id);
+    if (fc > 0) {
+      uint8_t fi = g_state.anim_frame % fc;
+      const uint8_t *p = pack::overrideFrame(id, fi);
+      if (p) {
+        u->drawXBM(x, y, SPRITE_W, SPRITE_H, (uint8_t *)p);
+        return;
+      }
+    }
+  }
   const SpriteInfo &info = SPRITES[id];
   if (info.frame_count == 0) return;
   uint8_t frame_idx = g_state.anim_frame % info.frame_count;
-
   static uint8_t buf[SPRITE_BYTES];
   memcpy_P(buf, info.frames[frame_idx], SPRITE_BYTES);
   u->drawXBM(x, y, SPRITE_W, SPRITE_H, buf);
@@ -1034,20 +1048,28 @@ void drawSystemView() {
            up / 3600, (up / 60) % 60, up % 60, (unsigned long)g_state.turns_done);
   row("Uptime", buf);
 
-  // Storage — useful once char packs start landing in LittleFS. Replaces
-  // the old "Stats" row whose energy/level/mood text was redundant with
-  // the MAIN view dashboard.
+  // Storage row — combines LittleFS usage with the active pack identity.
+  // The old "Stats" row (energy/level/mood text) was dropped because it
+  // duplicated the MAIN view dashboard.
   {
     unsigned long fs_tot  = xfer::fsTotalBytes();
     unsigned long fs_used = xfer::fsUsedBytes();
-    if (fs_tot > 0) {
-      String tot_s  = fmtBytes(fs_tot);
-      String used_s = fmtBytes(fs_used);
-      int pct = (int)((uint64_t)fs_used * 100UL / fs_tot);
-      snprintf(buf, sizeof(buf), "LittleFS %s / %s  (%d%%)",
-               used_s.c_str(), tot_s.c_str(), pct);
+    String pack_label;
+    if (pack::loadPending()) {
+      pack_label = "decoding...";
+    } else if (pack::activeName().length()) {
+      pack_label = pack::activeName() + " (" + String(pack::overrideCount()) + "/16)";
     } else {
-      strcpy(buf, "LittleFS unavailable");
+      pack_label = "(built-in)";
+    }
+    if (fs_tot > 0) {
+      String used_s = fmtBytes(fs_used);
+      String tot_s  = fmtBytes(fs_tot);
+      snprintf(buf, sizeof(buf), "fs %s/%s  pack %s",
+               used_s.c_str(), tot_s.c_str(), pack_label.c_str());
+    } else {
+      snprintf(buf, sizeof(buf), "LittleFS unavailable  pack %s",
+               pack_label.c_str());
     }
     row("Storage", buf);
   }

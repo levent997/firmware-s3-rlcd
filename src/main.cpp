@@ -10,6 +10,7 @@
 #include "demo.h"
 #include "rtc.h"
 #include "xfer.h"
+#include "pack.h"
 
 BuddyState g_state;
 
@@ -32,6 +33,7 @@ void setup() {
   sensors::begin();
   rtc::begin();
   xfer::begin();
+  pack::init();
   persist::load();
 
   // If the RTC has valid time (i.e. either VBAT was preserved across resets
@@ -69,6 +71,7 @@ void loop() {
   ble_nus::loop();
   sensors::loop();
   demo::tick();
+  pack::tick();
 
   // Connection liveness: 30s without heartbeat = treat as dead screen.
   // (BLE may still be linked, but we hide stale stats.)

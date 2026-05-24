@@ -1,4 +1,5 @@
 #include "xfer.h"
+#include "pack.h"
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <mbedtls/base64.h>
@@ -347,6 +348,12 @@ bool xfer::handleCmd(const char *cmd, JsonDocument &d, JsonDocument &out_ack) {
                   (unsigned long)LittleFS.usedBytes(),
                   (unsigned long)LittleFS.totalBytes(),
                   total_ok ? "ok" : "SIZE MISMATCH");
+    // Queue a runtime pack reload so the new GIFs override the built-in
+    // sprites. Decode runs from the main loop, not here — char_end ack
+    // must go out promptly or the desktop times out.
+    if (total_ok && char_name.length()) {
+      pack::requestLoad(char_name);
+    }
     char_name = "";
     char_total = 0;
     char_received = 0;

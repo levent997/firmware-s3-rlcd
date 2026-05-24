@@ -16,8 +16,8 @@
 | BLE NUS 外设 | `ble_bridge.{h,cpp}` (Bluedroid) | `ble_nus.{h,cpp}` (NimBLE) | ✅ 协议 + LE Secure Connections 加密 |
 | 协议解析 | `data.h` (含演示模式) | `protocol.{h,cpp}` | ⚠️ 缺 demo 模式 + entry 缓冲量 |
 | NVS 持久化 | `stats.h` | `persist.{h,cpp}` | ✅ 已做 |
-| 文件夹推送 | `xfer.h` (LittleFS) | — | ❌ **未做** |
-| 自定义角色包 | `character.{h,cpp}` (AnimatedGIF) | `sprites.h` (预转换) | ➖ 设计上不同：我们用静态 PROGMEM |
+| 文件夹推送 | `xfer.h` (LittleFS) | `src/xfer.{h,cpp}` (LittleFS @ 11.8 MB) | ✅ 完整 5 步状态机 + base64 + 路径校验 |
+| 自定义角色包 | `character.{h,cpp}` (AnimatedGIF) | `src/pack.{h,cpp}` (AnimatedGIF) | ✅ GIF -> PSRAM 1bpp override |
 | 角色物种 | `buddy.{h,cpp}` + `buddies/` 18 种 | `sprites.h` 1 套（Clawd 13 动画） | ➖ 设计上不同：我们走 GIF→bitmap，不用 ASCII pet |
 | 主循环 / UI | `main.cpp` (1265 行) | `main.cpp` + `ui.cpp` | ⚠️ 缺菜单、Info、Clock 屏 |
 | 传感器 | M5 内置 IMU / AXP192 | `sensors.{h,cpp}` SHTC3 + ADC | ➖ 不同硬件，行为不一样 |
@@ -53,7 +53,7 @@ REFERENCE.md 折叠协议（folder push）：
 
 | 步骤 | 官方 | 本机 |
 |---|---|---|
-| `char_begin` / `file` / `chunk` / `file_end` / `char_end` | ✅ 完整闭环 + base64 解码 + LittleFS 写盘 | ❌ 直接 ack=false 拒收 |
+| `char_begin` / `file` / `chunk` / `file_end` / `char_end` | ✅ 完整闭环 + base64 解码 + LittleFS 写盘 | ✅ 同（mbedtls base64，路径校验，磁盘满中止） |
 
 REFERENCE.md turn 事件：
 
@@ -212,14 +212,18 @@ REFERENCE.md turn 事件：
 - `moodAdjective()` 联动：velocity 平均 `<5s → +1` energy tier、`>30s → -1`
 - `hashState()` 把 `velocity_count` 和 `velocity_idx` 计入，新一次审批立刻触发重画
 
-### P1：Folder push（自定义角色包）
-- 我们的 sprite 是编译期静态的；要支持运行时自定义需要：
-  - LittleFS 分区
-  - `cmd:char_begin / file / chunk / file_end / char_end` 接收 + base64 解码
-  - 运行时 GIF 解码（`bitbank2/AnimatedGIF`）
-  - 退出条件 / 文件验证 / 路径校验（防 `..`）
-- 参考代码：`src/xfer.h`（含 9 个 ack 状态机）
-- 价值：能在不重新编译固件的情况下换角色
+### ✅ P1：Folder push（自定义角色包）— **完成** (P1-8a/b/c 三步)
+- **P1-8a** (`167f348`): 新分区表 `partitions_lfs.csv`（4 MB app + 11.8 MB
+  spiffs-label LittleFS）+ `src/xfer.{h,cpp}` 5 步状态机骨架，stub 不写盘
+- **P1-8b** (`64c417c`): 实际写 LittleFS，路径校验，递归删除老 pack，
+  磁盘满中止
+- **P1-8c** (本次): 加 `bitbank2/AnimatedGIF @ ^2.0.0` 依赖，新模块
+  `src/pack.{h,cpp}` 把 `/<pack>/<sprite>.gif` 解码进 PSRAM 1bpp 帧缓存，
+  `ui.cpp::drawSprite` 优先用 override，找不到再退回 PROGMEM。
+  - char_end 触发 `pack::requestLoad`（延迟到主循环，不阻塞 ack）
+  - 启动 `pack::init` 自动加载磁盘上第一个 pack
+  - 文件名 -> SpriteId 映射与 `tools/gif_to_sprites.py` 一致
+  - SYSTEM 视图 Storage 行显示 `fs N/12MB  pack <name> (k/16)`
 
 ### ✅ P2：Time sync 写入 PCF85063 — **完成** (本次提交)
 - 新模块 `src/rtc.{h,cpp}` 驱动 PCF85063A @ I2C 0x51（与 SHTC3 共用 Wire 总线）
@@ -302,7 +306,7 @@ REFERENCE.md turn 事件：
 | Approval 闭环（按键 + velocity）| 100% |
 | BLE 加密配对（LE SC + bond + passkey）| 100% |
 | NVS 持久化 | 100% |
-| Folder push（自定义角色包）| 0% |
+| Folder push（自定义角色包）| 100% |
 | 菜单 / 设置 / 重置 UI | 0% |
 | Clock 独立屏 | 0%（顶栏小时钟已驱动） |
 | RTC 写入 (PCF85063) | 100% |
@@ -324,3 +328,6 @@ REFERENCE.md turn 事件：
 | P2-6 | `a41352a` | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |
 | 修 P2-6 | `c812c81` | demo 误退 + 底栏文字重叠修复 |
 | P2-7 | `8125b71` | PCF85063 RTC 驱动 + time sync 双向 |
+| P1-8a | `167f348` | LittleFS 分区 + char_* 状态机骨架 (stub) |
+| P1-8b | `64c417c` | 实际 LittleFS 写盘 + 路径校验 |
+| P1-8c | (此提交) | AnimatedGIF 运行时解码 -> sprite override |

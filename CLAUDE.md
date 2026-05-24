@@ -52,18 +52,27 @@ On Windows the project ships two convenience scripts:
 
 ```
 firmware-s3-rlcd/
-  platformio.ini             ESP32-S3 + octal PSRAM, U8g2 + NimBLE + ArduinoJson
+  platformio.ini             ESP32-S3 + octal PSRAM, U8g2 + NimBLE +
+                             ArduinoJson + AnimatedGIF
+  partitions_lfs.csv         16 MB layout: 4 MB app + 11.8 MB LittleFS
+                             (label must stay "spiffs" for Arduino LFS)
   src/
-    main.cpp                 boot, loop, button → view switch, energy ticker
-    ble_nus.{h,cpp}          NimBLE Nordic UART peripheral, line-buffered TX/RX
-    protocol.{h,cpp}         JSON parsing, ack/permission responses,
-                             ASCII sanitiser, 5h rolling token sampler
-    state.h                  BuddyState — single shared snapshot
+    main.cpp                 boot, loop, button routing, energy ticker
+    ble_nus.{h,cpp}          NimBLE NUS peripheral + LE SC pairing/bonding
+    protocol.{h,cpp}         JSON parsing, ack/permission, ASCII sanitiser,
+                             5h rolling token sampler, time-sync dispatch
+    state.h                  BuddyState - single shared snapshot
     sensors.{h,cpp}          Battery ADC + SHTC3 temp/humidity
+    rtc.{h,cpp}              PCF85063 driver (BCD, local wall-clock store)
+    persist.{h,cpp}          NVS persistence (tokens, names, counters)
+    xfer.{h,cpp}             Folder-push state machine writing to LittleFS
+    pack.{h,cpp}             Runtime GIF decode -> PSRAM sprite overrides
+    demo.{h,cpp}             Fake-heartbeat rotator (SYSTEM long-press)
     buttons.{h,cpp}          KEY/BOOT debouncing, short/long press
-    ui.{h,cpp}               U8g2 dashboard: MAIN, USAGE, SYSTEM views
-    st7305_u8g2.{h,cpp}      ST7305 ↔ U8g2 backend (lifted from Waveshare)
-    sprites.h                Auto-generated 128×128 1bpp Clawd animation frames
+    ui.{h,cpp}               U8g2 dashboard: MAIN, USAGE, SYSTEM +
+                             approval overlay, history overlay, passkey
+    st7305_u8g2.{h,cpp}      ST7305 <-> U8g2 backend (lifted from Waveshare)
+    sprites.h                Auto-generated 128x128 1bpp built-in frames
   tools/
     gif_to_sprites.py        Re-generate sprites.h from clawd-on-desk gifs
   flash.bat, monitor.bat     Windows convenience scripts
@@ -90,28 +99,30 @@ Three views, cycled by the buttons:
 | SYSTEM  | Hardware diagnostics + memory bars + walking mascot strip      |
 
 Buttons:
-- `KEY` short = next view (`MAIN → USAGE → SYSTEM → MAIN`)
-- `BOOT` short = previous view (reverse cycle)
-- Long press: reserved (currently unused)
+- Active prompt: `KEY` short = approve, `BOOT` short = deny.
+- MAIN view (no prompt): long-press either = open transcript history overlay.
+- SYSTEM view (no prompt): long-press either = toggle demo mode (jumps to MAIN).
+- Otherwise: `KEY` short/long = next view, `BOOT` short/long = prev view.
+- History overlay open: any press closes it.
 
 The third physical button is hardware power-only and not software-readable.
 
 ## Wire Protocol Coverage
 
 Implemented:
-- Inbound heartbeat snapshot (total/running/waiting/msg/entries/tokens/tokens_today/prompt)
-- Inbound commands: `status`, `name`, `owner`, `unpair` (acked); `char_begin` (rejected)
-- Inbound `time` (epoch + tz offset)
-- Outbound `permission` response (legacy path — unused now that buttons no
-  longer drive approve/deny; left in `protocol::sendPermission` for future re-enable)
-- BLE NUS service `6e400001-...`, advertise name `Claude-<MAC tail>`
+- Inbound heartbeat snapshot (total/running/waiting/msg/entries[8]/tokens/tokens_today/prompt)
+- Inbound commands: `status`, `name`, `owner`, `unpair` (acked).
+- Inbound `time` (epoch + tz offset) — written to PCF85063 RTC.
+- Inbound folder push (`char_begin / file / chunk / file_end / char_end`)
+  via `src/xfer.{h,cpp}`. Files land on LittleFS as `/<pack_name>/<path>`;
+  GIFs get auto-decoded into PSRAM sprite overrides by `src/pack.{h,cpp}`.
+- Outbound `permission` response — driven by KEY (approve) / BOOT (deny)
+  buttons while a prompt is active.
+- BLE NUS service `6e400001-...`, LE Secure Connections + MITM bonding,
+  on-screen passkey display. Advertise name `Claude-<MAC tail>`.
 
 **Not implemented** (intentional):
-- `turn` event ingestion (4 KB cap, lower priority than heartbeats)
-- Folder push (`char_begin → file → chunk → file_end → char_end`). We reject
-  `char_begin` so the desktop times out gracefully.
-- LE Secure Connections bonding. Link is unencrypted; OK for personal desks,
-  not OK for any environment where transcript snippets matter.
+- `turn` event ingestion (4 KB cap, lower priority than heartbeats).
 
 ## Sprite Pipeline
 
@@ -128,15 +139,31 @@ To regenerate (e.g. after editing the gif set or target size):
 python tools/gif_to_sprites.py
 ```
 
-Currently embedded sprites:
-`idle / building / typing / thinking / happy / notification / error / sleeping`.
+Currently embedded sprites (16):
+`idle / idle_reading / bubble / building / typing / thinking / sweeping /
+juggling / carrying / headphones / happy / notification / double_jump /
+annoyed / error / sleeping`.
 
-State → sprite mapping lives in `ui.cpp::moodToSprite`.
+State -> sprite mapping lives in `ui.cpp::moodToSprite`.
+
+**Runtime overrides**: `src/pack.{h,cpp}` listens for folder pushes
+(`/<pack_name>/<sprite>.gif` on LittleFS) and decodes each GIF into
+PSRAM-allocated 1bpp frames that win over `SPRITES[]` at draw time. Most
+recent pushed pack is auto-loaded on boot. Same filename -> SpriteId map as
+`tools/gif_to_sprites.py`.
 
 ## Constraints / Gotchas
 
+- LittleFS partition label MUST stay `spiffs` in `partitions_lfs.csv`.
+  Arduino-ESP32's `LittleFS::begin()` defaults to that label and won't mount
+  any other name without an explicit override. Found out the hard way --
+  reflashing with a `littlefs`-named partition shows `partition "spiffs"
+  could not be found` and the mount fails silently.
+- `partitions_lfs.csv` MUST be ASCII (no em-dash, smart quotes, CJK). The
+  PlatformIO partition parser reads the file with the system codec (GBK on
+  Windows-CN) and chokes on UTF-8 multibyte sequences during link.
 - U8g2 fonts used are **Latin-1 only**. Incoming non-ASCII bytes are replaced
-  with `?`; any entry that loses content is dropped (see `protocol::asciiOnly`).
+  with space (not '?') so the line stays readable; see `protocol::asciiOnly`.
   Switching to a CJK-capable font (e.g. `u8g2_font_unifont_t_chinese*`) would
   cost ~150 KB flash; skip unless asked.
 - ESP32-S3 USB-Serial/JTAG → `pio device monitor` opens the same COM as the
@@ -156,13 +183,16 @@ State → sprite mapping lives in `ui.cpp::moodToSprite`.
 
 ## High-Risk Areas
 
-- **Disconnect mystery**: occasional BLE drops a few seconds after pairing.
-  Current theory: missing LE Secure Connections bonding causes Windows to
-  drop the link, or our notify is not being subscribed to in time. The
-  `[ble] tx subscribe state=` log line is the diagnostic — capture it next
-  time before changing anything.
 - **`sprites.h` is generated.** Don't hand-edit. Re-run the converter and
   commit the result.
+- **Partition table swaps preserve NVS only.** The LittleFS partition gets
+  reformatted on first boot after any size/offset change. NVS at 0x9000 is
+  the only thing that survives intact (kept persisted tokens, names, level
+  counters across the P1-8a partition swap). Don't move it.
+- **GIF decode blocks the loop for seconds.** `pack::tick()` runs the
+  AnimatedGIF decoder synchronously when a new pack lands. UI freezes during
+  that window. If we ever need to decode larger packs, move it to a
+  FreeRTOS task pinned to the other core.
 
 ## Testing
 

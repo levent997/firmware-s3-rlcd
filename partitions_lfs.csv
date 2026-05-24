@@ -9,5 +9,8 @@
 nvs,        data, nvs,      0x9000,    0x5000,
 otadata,    data, ota,      0xe000,    0x2000,
 app0,       app,  ota_0,    0x10000,   0x400000,
-littlefs,   data, spiffs,   0x410000,  0xBE0000,
+# Label MUST be "spiffs" -- Arduino-ESP32's LittleFS::begin() defaults to that
+# partition label even though the on-disk format is LittleFS (the subtype is
+# what makes it a filesystem slot; the on-disk format is independent).
+spiffs,     data, spiffs,   0x410000,  0xBE0000,
 coredump,   data, coredump, 0xFF0000,  0x10000,
