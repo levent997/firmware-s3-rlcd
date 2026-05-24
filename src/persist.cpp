@@ -49,6 +49,7 @@ void persist::load() {
   if (pet.length()) g_state.name = pet;
   String own = prefs.getString("owner", "");
   if (own.length()) g_state.owner = own;
+  g_state.sound_on = prefs.getBool("sound", true);
 
   last_saved_level  = g_state.level;
   last_saved_tokens = g_state.tokens_boot;
@@ -108,6 +109,34 @@ void persist::onOwnerNameChanged() {
   Scope s(false);
   if (!s.ok) return;
   prefs.putString("owner", g_state.owner);
+}
+
+void persist::onSoundChanged() {
+  Scope s(false);
+  if (!s.ok) return;
+  prefs.putBool("sound", g_state.sound_on);
+}
+
+void persist::resetStats() {
+  // Zero out the usage counters in RAM first so the UI updates immediately.
+  g_state.tokens_boot  = 0;
+  g_state.level        = 0;
+  g_state.approvals    = 0;
+  g_state.denies       = 0;
+  g_state.turns_done   = 0;
+  g_state.velocity_count = 0;
+  g_state.velocity_idx   = 0;
+  for (int i = 0; i < 8; i++) g_state.velocity[i] = 0;
+  last_saved_level  = 0;
+  last_saved_tokens = 0;
+  Scope s(false);
+  if (!s.ok) return;
+  prefs.putUInt("tok_boot", 0);
+  prefs.putUInt("level",    0);
+  prefs.putUInt("appr",     0);
+  prefs.putUInt("deny",     0);
+  prefs.putUInt("turns",    0);
+  Serial.println("[persist] reset usage counters");
 }
 
 void persist::wipe() {

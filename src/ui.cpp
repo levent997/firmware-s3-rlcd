@@ -6,6 +6,7 @@
 #include "xfer.h"
 #include "pack.h"
 #include "imu.h"
+#include "menu.h"
 #include <pgmspace.h>
 
 namespace {
@@ -1557,6 +1558,143 @@ static void drawHistoryOverlay() {
   u->sendBuffer();
 }
 
+// Settings menu — full-screen list. Selected row inverted; destructive
+// items get a small "!" marker. Bottom hint bar shows the active key map.
+static void drawMenu() {
+  u->clearBuffer();
+  u->setDrawColor(1);
+
+  // Title bar
+  u->drawBox(0, 0, W, TOP_H);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  u->drawStr(8, 16, "Settings");
+  u->setFont(u8g2_font_6x10_tf);
+  // Subtitle counter
+  char sub[16];
+  snprintf(sub, sizeof(sub), "%d/%d", g_state.menu_selected + 1, menu::itemCount());
+  int sw = u->getStrWidth(sub);
+  u->drawStr(W - sw - 8, 16, sub);
+  u->setDrawColor(1);
+
+  // Item list
+  int row_h = 28;
+  int y = TOP_H + 8;
+  for (int i = 0; i < menu::itemCount(); i++) {
+    bool sel = (i == g_state.menu_selected);
+    if (sel) {
+      u->setDrawColor(1);
+      u->drawRBox(6, y, W - 12, row_h - 4, 4);
+      u->setDrawColor(0);
+    }
+    // Marker for destructive items
+    u->setFont(u8g2_font_helvB14_tf);
+    if (menu::itemIsDestructive(i)) {
+      u->drawStr(14, y + 18, "!");
+    }
+    // Label
+    u->drawStr(28, y + 18, menu::itemLabel(i));
+    // Inline value (for toggles like Sound: ON/OFF), right-aligned
+    const char *val = menu::itemValue(i);
+    if (val && val[0]) {
+      u->setFont(u8g2_font_helvB14_tf);
+      int vw = u->getStrWidth(val);
+      u->drawStr(W - vw - 16, y + 18, val);
+    }
+    u->setDrawColor(1);
+    y += row_h;
+  }
+
+  // Bottom hint
+  u->drawBox(0, H - BOT_H, W, BOT_H);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(8, H - 5,
+             "[KEY] down  [BOOT] up  [KEY long] activate  [BOOT long] close");
+  u->setDrawColor(1);
+
+  u->sendBuffer();
+}
+
+// Full-screen confirm screen for destructive menu items. The first KEY-long
+// from the menu surfaces this; a second KEY-long fires the action.
+static void drawMenuConfirm() {
+  u->clearBuffer();
+  u->setDrawColor(1);
+
+  // Title bar with attention chip
+  u->drawBox(0, 0, W, TOP_H);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  u->drawStr(8, 16, "Confirm");
+  u->setDrawColor(1);
+
+  // Big "!" warning to the left
+  int icon_x = 24;
+  int icon_y = TOP_H + 50;
+  u->setFont(u8g2_font_logisoso50_tn);
+  // logisoso50 is digits-only so we can't render "!"; draw a manual
+  // triangle warning instead.
+  int tri_size = 60;
+  int tri_cx = icon_x + tri_size / 2;
+  int tri_top = icon_y - tri_size;
+  u->drawTriangle(tri_cx, tri_top,
+                  icon_x, icon_y,
+                  icon_x + tri_size, icon_y);
+  // Hollow inside
+  u->setDrawColor(0);
+  u->drawTriangle(tri_cx, tri_top + 8,
+                  icon_x + 6, icon_y - 4,
+                  icon_x + tri_size - 6, icon_y - 4);
+  u->setDrawColor(1);
+  // Exclamation mark inside the triangle
+  int bang_x = tri_cx - 2;
+  u->drawBox(bang_x, tri_top + 16, 4, 22);
+  u->drawBox(bang_x, tri_top + 42, 4, 4);
+
+  // Title + body to the right of the icon
+  int tx = icon_x + tri_size + 18;
+  u->setFont(u8g2_font_helvB18_tf);
+  u->drawStr(tx, TOP_H + 24, menu::confirmTitle());
+
+  // Body — split on \n manually because drawStr doesn't.
+  u->setFont(u8g2_font_7x13_tf);
+  const char *body = menu::confirmBody();
+  int line_y = TOP_H + 50;
+  const char *line_start = body;
+  while (*line_start) {
+    const char *nl = strchr(line_start, '\n');
+    int line_len = nl ? (nl - line_start) : (int)strlen(line_start);
+    char tmp[128];
+    if (line_len > (int)sizeof(tmp) - 1) line_len = sizeof(tmp) - 1;
+    memcpy(tmp, line_start, line_len);
+    tmp[line_len] = 0;
+    u->drawStr(tx, line_y, tmp);
+    line_y += 16;
+    if (!nl) break;
+    line_start = nl + 1;
+  }
+
+  // Action buttons along the bottom: CONFIRM inverted, CANCEL outline.
+  int hy = H - BOT_H - 38;
+  int half = (W - 24) / 2;
+  u->setDrawColor(1);
+  u->drawRBox(8, hy, half, 28, 6);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  const char *a = "[KEY long] CONFIRM";
+  int aw = u->getStrWidth(a);
+  u->drawStr(8 + (half - aw) / 2, hy + 19, a);
+  u->setDrawColor(1);
+
+  u->drawRFrame(W - 8 - half, hy, half, 28, 6);
+  const char *c = "[BOOT] CANCEL";
+  int cw = u->getStrWidth(c);
+  u->drawStr(W - 8 - half + (half - cw) / 2, hy + 19, c);
+
+  u->sendBuffer();
+}
+
 // Full-screen passkey display during pairing. Centered 6-digit number
 // in a big font, with instructions.
 static void drawPasskeyScreen() {
@@ -1611,7 +1749,24 @@ bool ui::render() {
     return true;
   }
 
-  // History overlay takes priority over normal views (but not over passkey).
+  // Settings menu (and its destructive-action confirm screen) takes
+  // priority over history / normal views — the menu owns all input while
+  // open so it's hidden state if we don't render it.
+  if (g_state.menu_open) {
+    uint32_t h = 0xDEADBEEFu
+               ^ (uint32_t)g_state.menu_selected
+               ^ ((uint32_t)g_state.menu_confirming << 8)
+               ^ ((uint32_t)g_state.sound_on << 16);
+    if (h != lastHash) {
+      lastHash = h;
+      if (g_state.menu_confirming) drawMenuConfirm();
+      else                         drawMenu();
+    }
+    return true;
+  }
+
+  // History overlay takes priority over normal views (but not over passkey
+  // or menu).
   // Mix entry text + connection state into the hash so the screen updates as
   // new transcripts arrive without flicker between heartbeats.
   if (g_state.history_open) {

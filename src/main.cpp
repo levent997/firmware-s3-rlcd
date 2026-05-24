@@ -13,6 +13,7 @@
 #include "pack.h"
 #include "audio.h"
 #include "imu.h"
+#include "menu.h"
 
 BuddyState g_state;
 
@@ -31,6 +32,9 @@ void setup() {
   lcd.begin(0, U8G2_R1);
   ui::begin(lcd.getU8g2());
 
+  // persist::load() up front so g_state.sound_on (and pet name, owner, ...)
+  // are valid before any subsystem that consults them initialises.
+  persist::load();
   buttons::begin();
   sensors::begin();
   rtc::begin();
@@ -38,7 +42,6 @@ void setup() {
   xfer::begin();
   pack::init();
   audio::begin();
-  persist::load();
 
   // If the RTC has valid time (i.e. either VBAT was preserved across resets
   // or the desktop has synced us before), seed g_state so the top-bar clock
@@ -77,6 +80,7 @@ void loop() {
   imu::loop();
   demo::tick();
   pack::tick();
+  menu::tick();
 
   // Connection liveness: 30s without heartbeat = treat as dead screen.
   // (BLE may still be linked, but we hide stale stats.)
@@ -103,7 +107,16 @@ void loop() {
   buttons::Event ev = buttons::poll();
   if (ev != buttons::NONE) {
     bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
-    if (g_state.history_open) {
+    if (menu::isOpen()) {
+      // Menu owns all button input while open.
+      switch (ev) {
+        case buttons::KEY_SHORT:  menu::onKeyShort();  break;
+        case buttons::BOOT_SHORT: menu::onBootShort(); break;
+        case buttons::KEY_LONG:   menu::onKeyLong();   break;
+        case buttons::BOOT_LONG:  menu::onBootLong();  break;
+        default: break;
+      }
+    } else if (g_state.history_open) {
       // Any press closes the transcript history overlay.
       g_state.history_open = false;
       Serial.println("[ui] history closed");
@@ -116,12 +129,15 @@ void loop() {
     } else if (ev == buttons::KEY_LONG || ev == buttons::BOOT_LONG) {
       // Long-press semantics depend on what the user is looking at:
       //   * active prompt or MAIN view  -> open transcript history overlay
+      //   * USAGE view                   -> open settings menu
       //   * SYSTEM view                  -> toggle demo mode (and jump to MAIN
       //                                     so the user sees the showcase)
-      //   * USAGE / CLOCK view           -> same as short (cycle direction)
+      //   * CLOCK view                   -> same as short (cycle direction)
       if (active_prompt || g_state.view == 0) {
         g_state.history_open = true;
         Serial.println("[ui] history opened");
+      } else if (g_state.view == 1) {
+        menu::open();
       } else if (g_state.view == 2) {
         demo::toggle();
         if (g_state.demo_mode) g_state.view = 0;   // jump to MAIN to see it

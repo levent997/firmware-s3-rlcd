@@ -1,4 +1,5 @@
 #include "audio.h"
+#include "state.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
@@ -128,6 +129,7 @@ bool initI2S() {
 // non-time-critical context (not from inside a tight render loop).
 void playTone(int freq_hz, int duration_ms, float amplitude = 0.35f) {
   if (!ready) return;
+  if (!g_state.sound_on) return;   // settings menu "Sound: OFF" mutes us
 
   digitalWrite(PIN_PA_EN, HIGH);
   // Brief warm-up so the amp settles before audio hits it.

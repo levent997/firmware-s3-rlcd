@@ -17,6 +17,11 @@ namespace persist {
   void onTokensProgress();         // tokens / level changed (throttled internally)
   void onPetNameChanged();
   void onOwnerNameChanged();
+  void onSoundChanged();           // sound_on flag toggled
+
+  // Reset only the usage counters (tokens/level/approvals/denies/turns) --
+  // leaves name/owner/sound and BLE bonds intact. Menu "Reset stats".
+  void resetStats();
 
   // Erase everything we own. Used by `cmd:unpair` cousin / factory reset.
   void wipe();

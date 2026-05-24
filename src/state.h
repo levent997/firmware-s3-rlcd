@@ -54,7 +54,14 @@ struct BuddyState {
   uint8_t view = 0;                // 0=main, 1=usage, 2=system, 3=clock
   bool history_open = false;       // long-press on MAIN opens the 8-row transcript overlay
   bool demo_mode = false;          // long-press on SYSTEM rotates fake heartbeats for showcase
+  bool menu_open = false;          // long-press on USAGE opens settings menu
+  uint8_t menu_selected = 0;       // currently highlighted menu row
+  bool menu_confirming = false;    // showing a destructive-action confirm screen
+  uint32_t menu_last_input_ms = 0; // for 30 s inactivity auto-close
   uint32_t anim_frame = 0;
+
+  // Settings (persisted to NVS).
+  bool sound_on = true;            // approve/deny/error feedback tones
 
   // Derived "tamagotchi" stats — modelled on the M5StickC reference
   // firmware (src/stats.h in the parent project).
