@@ -34,7 +34,7 @@ REFERENCE.md 心跳 snapshot 字段：
 | `running` | ✅ | ✅ | |
 | `waiting` | ✅ | ✅ | |
 | `msg` | ✅ | ✅ | |
-| `entries` | ✅ 最多 **8** 行 × 91 字符，可滚动查看 | ⚠️ 仅 **3** 行 × 32 字符，无滚动 | **可补强**（见 §4.B） |
+| `entries` | ✅ 最多 **8** 行 × 91 字符，可滚动查看 | ✅ 8 行存储；MAIN 显示最近 3 行；长按 KEY/BOOT 唤出 8 行 history overlay | |
 | `tokens` | ✅ + NVS delta 累加 | ✅ + NVS 累加（`tokens_boot`）| |
 | `tokens_today` | ✅ | ✅ | |
 | `prompt` | ✅ approve/deny 全闭环 | ✅ KEY=approve / BOOT=deny + velocity 记录 | |
@@ -97,12 +97,10 @@ REFERENCE.md turn 事件：
 
 | 维度 | 官方 | 本机 |
 |---|---|---|
-| 最大条数 | 8 | 3 |
-| 每条长度 | 91 字符 | 32 字符（实质，受屏宽限制）|
-| 历史滚动 | ✅ B 键 / `msgScroll` | ❌ |
+| 最大条数 | 8 | ✅ 8（存储），MAIN 渲染显示最近 3 |
+| 每条长度 | 91 字符 | ~56 字符（W=400 / 7px 字宽，超出 `~` 截断）|
+| 历史浏览 | ✅ B 键 / `msgScroll` | ✅ MAIN 视图长按 KEY/BOOT 唤出全屏 history overlay |
 | `nLines=0` 回退到 `msg` | ✅ | ✅（最近刚补上）|
-
-**可补强**：扩到 8 条缓冲，KEY 长按进入"transcript 滚动模式"，BOOT 滚动。
 
 ### 4.C 默认设置
 
@@ -228,10 +226,15 @@ REFERENCE.md turn 事件：
 - 加 PCF85063 I2C 驱动，写入 RTC 寄存器
 - BLE 断开期间时钟不丢，重连前也能在顶栏显示正确时间
 
-### P2：扩 entries 缓冲到 8 条 + 滚动历史
-- 把 `g_state.entries[3]` 扩到 `[8]`
-- 长按 KEY 进入 "history scroll" 模式
-- 短按 BOOT 翻页，再次长按 KEY 退出
+### ✅ P2：扩 entries 缓冲到 8 条 + 历史浏览 — **完成** (本次提交)
+- `g_state.entries[3]` → `[8]`，`protocol.cpp` 解析 8 条
+- `g_state.history_open` 标志
+- MAIN 视图长按 KEY 或 BOOT → 唤出 `drawHistoryOverlay()` 全屏层
+  - 标题栏 `Transcript history  N/8  msg: ...`
+  - 8 行：编号 + 截断的内容（`~`），空槽显 `(empty)`
+  - 底部双行：左 `[any key] close history overlay`，右 `live heartbeat / stale`
+- 任意按键关闭 history overlay
+- 主屏底栏提示语在 MAIN 视图加 `long-press = history`
 
 ### P2：演示模式（fake heartbeat）
 - 官方 `data.h:130-170` 有 `_FAKES[]` 数组循环假数据
@@ -305,3 +308,4 @@ REFERENCE.md turn 事件：
 | P0-2 | `dd29e52` | LE Secure Connections 加密 + passkey 屏 |
 | P1-3 | `73fc03e` | Approval 按键流 + velocity ring buffer + 全屏审批视图 |
 | P1-4 | `c7040d7` | Velocity 直方图（SYSTEM 视图） + mood 联动 |
+| P2-5 | (此提交) | entries 缓冲 3→8 + 长按 history overlay |

@@ -134,11 +134,11 @@ void handleHeartbeat(JsonDocument &d) {
   g_state.tokens = d["tokens"] | 0;
   g_state.tokens_today = d["tokens_today"] | 0;
 
-  for (int i = 0; i < 3; i++) g_state.entries[i] = "";
+  for (int i = 0; i < 8; i++) g_state.entries[i] = "";
   JsonArray ents = d["entries"].as<JsonArray>();
   int i = 0;
   for (JsonVariant v : ents) {
-    if (i >= 3) break;
+    if (i >= 8) break;
     g_state.entries[i++] = asciiOnly(v | "");
   }
 

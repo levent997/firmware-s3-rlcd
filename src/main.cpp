@@ -54,23 +54,38 @@ void loop() {
   }
 
   // Buttons:
+  //   History overlay open (any view):
+  //     any short or long press = close overlay (returns to previous view)
   //   With an active permission prompt:
   //     KEY  short = approve   BOOT short = deny
-  //     long-press of either   = ignore approval, navigate views (escape)
-  //   Otherwise:
+  //     long-press of either   = open history overlay (escape from approval)
+  //   On MAIN view, no prompt:
+  //     KEY/BOOT long = open history overlay (8-row transcript)
+  //   Otherwise (any view, no prompt, no history):
   //     KEY  short = next view    BOOT short = prev view
+  //     KEY  long  = next view    BOOT long  = prev view  (same as short)
   //
   // Note: hardware has a 3rd physical button (power) wired to the ETA6098
   // PMIC's OUTH/KEY pin, not a GPIO — it cannot be read from firmware.
   buttons::Event ev = buttons::poll();
   if (ev != buttons::NONE) {
     bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
-    if (active_prompt && ev == buttons::KEY_SHORT) {
+    if (g_state.history_open) {
+      // Any press closes the transcript history overlay.
+      g_state.history_open = false;
+      Serial.println("[ui] history closed");
+    } else if (active_prompt && ev == buttons::KEY_SHORT) {
       Serial.printf("[approval] %s APPROVE\n", g_state.prompt.id.c_str());
       protocol::sendPermission(g_state.prompt.id, true);
     } else if (active_prompt && ev == buttons::BOOT_SHORT) {
       Serial.printf("[approval] %s DENY\n", g_state.prompt.id.c_str());
       protocol::sendPermission(g_state.prompt.id, false);
+    } else if ((ev == buttons::KEY_LONG || ev == buttons::BOOT_LONG)
+               && (g_state.view == 0 || active_prompt)) {
+      // Long-press on MAIN (or while a prompt is up) opens the history
+      // overlay. From any other view the long-press still cycles views below.
+      g_state.history_open = true;
+      Serial.println("[ui] history opened");
     } else if (ev == buttons::KEY_SHORT || ev == buttons::KEY_LONG) {
       g_state.view = (g_state.view + 1) % 3;
       Serial.printf("[ui] view=%u (next)\n", (unsigned)g_state.view);

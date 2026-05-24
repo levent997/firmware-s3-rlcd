@@ -17,7 +17,10 @@ struct BuddyState {
   int running = 0;
   int waiting = 0;
   String msg;
-  String entries[3];
+  // Heartbeat carries up to 8 transcript entries per snapshot. We store all of
+  // them; the MAIN view shows the latest 3 for layout reasons, and the
+  // long-press history overlay (`history_open`) reveals all 8.
+  String entries[8];
   uint32_t tokens = 0;
   uint32_t tokens_today = 0;
   uint32_t tokens_boot = 0;        // local monotonic accumulator since device boot
@@ -48,7 +51,8 @@ struct BuddyState {
   uint32_t time_sync_ms = 0;       // millis() when synced
 
   // UI
-  uint8_t view = 0;                // 0=main, 1=usage
+  uint8_t view = 0;                // 0=main, 1=usage, 2=system
+  bool history_open = false;       // long-press on MAIN opens the 8-row transcript overlay
   uint32_t anim_frame = 0;
 
   // Derived "tamagotchi" stats — modelled on the M5StickC reference

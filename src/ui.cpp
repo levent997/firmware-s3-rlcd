@@ -116,9 +116,11 @@ uint32_t hashState() {
   mix(g_state.msg.c_str(), g_state.msg.length());
   mix(g_state.prompt.tool.c_str(), g_state.prompt.tool.length());
   mix(g_state.prompt.hint.c_str(), g_state.prompt.hint.length());
-  for (int i = 0; i < 3; i++) mix(g_state.entries[i].c_str(), g_state.entries[i].length());
+  for (int i = 0; i < 8; i++) mix(g_state.entries[i].c_str(), g_state.entries[i].length());
   uint8_t conn = ble_nus::connected() ? 1 : 0;
   mix(&conn, 1);
+  uint8_t hopen = g_state.history_open ? 1 : 0;
+  mix(&hopen, 1);
   uint32_t af = g_state.anim_frame;
   mix(&af, sizeof(af));
   // Velocity ring buffer state — drives both the histogram and the mood
@@ -255,10 +257,10 @@ void drawBottomBar() {
   u->setFont(u8g2_font_6x10_tf);
 
   bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
-  char left[80];
+  char left[96];
   if (active_prompt) {
     snprintf(left, sizeof(left),
-             "[KEY] APPROVE   [BOOT] DENY   (long-press = ignore + nav)");
+             "[KEY] APPROVE   [BOOT] DENY   (long-press = open history)");
   } else {
     const char *title;
     switch (g_state.view) {
@@ -267,8 +269,14 @@ void drawBottomBar() {
       case 2: title = "SYSTEM"; break;
       default: title = "?";
     }
-    snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
-             title, (unsigned)(g_state.view + 1));
+    if (g_state.view == 0) {
+      snprintf(left, sizeof(left),
+               "[KEY] next   [BOOT] prev   long-press = history   view: %s (%u/3)",
+               title, (unsigned)(g_state.view + 1));
+    } else {
+      snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
+               title, (unsigned)(g_state.view + 1));
+    }
   }
   u->drawStr(6, H - 5, left);
 
@@ -1077,6 +1085,85 @@ void ui::begin(U8G2 *uu) {
   u = uu;
 }
 
+// Full-screen transcript history overlay. Shows all 8 entries from the most
+// recent heartbeat (vs. the MAIN view which only has space for the latest 3).
+// Opened by long-press of KEY or BOOT on MAIN view; any subsequent button
+// press closes it (handled by main.cpp's button router).
+static void drawHistoryOverlay() {
+  u->clearBuffer();
+  u->setDrawColor(1);
+
+  // Title bar
+  u->drawBox(0, 0, W, TOP_H);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_helvB14_tf);
+  u->drawStr(8, 16, "Transcript history");
+
+  int filled = 0;
+  for (int i = 0; i < 8; i++) if (g_state.entries[i].length()) filled++;
+  char ctitle[24];
+  if (g_state.msg.length()) {
+    snprintf(ctitle, sizeof(ctitle), "%d/8  msg: %s", filled, g_state.msg.c_str());
+  } else {
+    snprintf(ctitle, sizeof(ctitle), "%d/8", filled);
+  }
+  // Truncate if too wide to fit.
+  u->setFont(u8g2_font_6x13B_tf);
+  int title_w = u->getStrWidth(ctitle);
+  int max_w = W - u->getStrWidth("Transcript history") - 24;
+  if (title_w > max_w) {
+    int chars = max_w / 7;
+    if (chars > 4) { ctitle[chars - 1] = '~'; ctitle[chars] = 0; }
+  }
+  int tw = u->getStrWidth(ctitle);
+  u->drawStr(W - tw - 8, 16, ctitle);
+  u->setDrawColor(1);
+
+  // 8 rows × 26 px ≈ 208 px (TOP_H + 18 .. H - BOT_H - 10 spans ~242 px)
+  int row_h = 26;
+  int y = TOP_H + 10;
+
+  u->setFont(u8g2_font_7x13_tf);
+  for (int i = 0; i < 8; i++) {
+    // Row index label
+    char label[6];
+    snprintf(label, sizeof(label), "%d.", i + 1);
+    u->setFont(u8g2_font_6x13B_tf);
+    u->drawStr(8, y + 14, label);
+
+    u->setFont(u8g2_font_7x13_tf);
+    if (g_state.entries[i].length()) {
+      String s = g_state.entries[i];
+      // Single line per row, truncate with "~" if too wide.
+      int avail = W - 40;
+      int max_chars = avail / 7;
+      if ((int)s.length() > max_chars) s = s.substring(0, max_chars - 1) + "~";
+      u->drawStr(34, y + 14, s.c_str());
+    } else {
+      u->setFont(u8g2_font_6x10_tf);
+      u->drawStr(34, y + 14, "(empty)");
+    }
+
+    // Faint separator
+    if (i < 7) u->drawHLine(8, y + row_h - 4, W - 16);
+    y += row_h;
+  }
+
+  // Footer hint
+  u->drawBox(0, H - BOT_H, W, BOT_H);
+  u->setDrawColor(0);
+  u->setFont(u8g2_font_6x10_tf);
+  const char *hint = "[any key] close history overlay";
+  u->drawStr(8, H - 5, hint);
+  // Right side: source = current heartbeat
+  const char *src = ble_nus::connected() ? "live heartbeat" : "stale (BLE offline)";
+  int sw = u->getStrWidth(src);
+  u->drawStr(W - sw - 6, H - 5, src);
+  u->setDrawColor(1);
+
+  u->sendBuffer();
+}
+
 // Full-screen passkey display during pairing. Centered 6-digit number
 // in a big font, with instructions.
 static void drawPasskeyScreen() {
@@ -1127,6 +1214,24 @@ bool ui::render() {
     if (h != lastHash) {
       lastHash = h;
       drawPasskeyScreen();
+    }
+    return true;
+  }
+
+  // History overlay takes priority over normal views (but not over passkey).
+  // Mix entry text + connection state into the hash so the screen updates as
+  // new transcripts arrive without flicker between heartbeats.
+  if (g_state.history_open) {
+    uint32_t h = 0xC0FFEEu;
+    for (int i = 0; i < 8; i++) {
+      const char *s = g_state.entries[i].c_str();
+      for (const uint8_t *p = (const uint8_t *)s; *p; ++p) h = h * 31u + *p;
+    }
+    h ^= ble_nus::connected() ? 1 : 0;
+    h ^= (uint32_t)g_state.msg.length() << 16;
+    if (h != lastHash) {
+      lastHash = h;
+      drawHistoryOverlay();
     }
     return true;
   }
