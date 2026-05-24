@@ -303,22 +303,28 @@ void drawBottomBar() {
 
   // The bottom bar is tight (400 px, 6x10 font => ~66 chars max). The right
   // side eats up ~16 chars for "DEMO heartbeat" / "BLE: advertising", so the
-  // left string has to stay under ~48 chars or it overlaps. Keep it terse.
+  // left string has to stay under ~48 chars or it overlaps. Keep it terse,
+  // and put the "(N/3)" page index at the tail so the user always sees which
+  // view they're on without us having to spell out MAIN/USAGE/SYSTEM.
   bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
   char left[96];
+  char page[8] = "";
+  if (!active_prompt) {
+    snprintf(page, sizeof(page), " (%u/3)", (unsigned)(g_state.view + 1));
+  }
   if (active_prompt) {
     snprintf(left, sizeof(left),
-             "[KEY] APPROVE  [BOOT] DENY  long=history");   // 40 chars
+             "[KEY] APPROVE  [BOOT] DENY  long=history");
   } else if (g_state.view == 0) {
     snprintf(left, sizeof(left),
-             "[KEY] next  [BOOT] prev  long=history");      // 37 chars
+             "[KEY] next  [BOOT] prev  long=history%s", page);
   } else if (g_state.view == 2) {
     snprintf(left, sizeof(left),
-             "[KEY] next  [BOOT] prev  long=%s",
-             g_state.demo_mode ? "exit demo" : "demo");      // 35-40 chars
+             "[KEY] next  [BOOT] prev  long=%s%s",
+             g_state.demo_mode ? "exit demo" : "demo", page);
   } else {
     snprintf(left, sizeof(left),
-             "[KEY] next  [BOOT] prev");                     // 23 chars
+             "[KEY] next  [BOOT] prev%s", page);
   }
   u->drawStr(6, H - 5, left);
 
@@ -720,10 +726,15 @@ void drawUsageView() {
   u->setDrawColor(1);
   u->drawBox(0, TOP_H, W, 24);
   u->setDrawColor(0);
+  // Title is a variable-width font, so measure it and offset the plan tag
+  // dynamically -- the old hard-coded x=146 was 7 px short of the actual
+  // "Plan usage limits" width and the two strings overlapped.
   u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(8, TOP_H + 17, "Plan usage limits");
+  const char *title = "Plan usage limits";
+  u->drawStr(8, TOP_H + 17, title);
+  int title_w = u->getStrWidth(title);
   u->setFont(u8g2_font_6x13B_tf);
-  u->drawStr(146, TOP_H + 17, "Max (5x)");
+  u->drawStr(8 + title_w + 12, TOP_H + 17, "Max (5x)");
   if (g_state.time_sync_ms) {
     uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
     uint32_t local = g_state.time_epoch + elapsed + g_state.time_offset_sec;
