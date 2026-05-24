@@ -6,6 +6,7 @@
 #include "buttons.h"
 #include "ui.h"
 #include "sensors.h"
+#include "persist.h"
 
 BuddyState g_state;
 
@@ -26,6 +27,7 @@ void setup() {
 
   buttons::begin();
   sensors::begin();
+  persist::load();
 
   // Advertise with a Claude- prefix so the desktop picker filters to us.
   uint64_t mac = ESP.getEfuseMac();
@@ -103,6 +105,7 @@ void loop() {
           g_state.energy_at_nap = 5;
           g_state.last_nap_end_ms = now;
           g_state.napping = false;
+          persist::onNapEnd();
         }
         g_state.nap_started_ms = 0;
       }
@@ -115,7 +118,10 @@ void loop() {
       g_state.energy_tier = (uint8_t)e;
 
       // Level (derived; recompute every tick is fine, monotonic-ish).
-      g_state.level = g_state.tokens / TOKENS_PER_LEVEL;
+      g_state.level = g_state.tokens_boot / TOKENS_PER_LEVEL;
+
+      // Throttle-checked NVS save for tokens / level progress.
+      persist::onTokensProgress();
     }
   }
 

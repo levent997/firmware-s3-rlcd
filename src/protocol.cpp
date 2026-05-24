@@ -1,6 +1,7 @@
 #include "protocol.h"
 #include "ble_nus.h"
 #include "state.h"
+#include "persist.h"
 #include <ArduinoJson.h>
 
 namespace {
@@ -175,9 +176,25 @@ void protocol::handleLine(const String &line) {
   const char *cmd = d["cmd"] | (const char *)nullptr;
   if (cmd) {
     if (!strcmp(cmd, "status"))      { sendStatusAck();          return; }
-    if (!strcmp(cmd, "name"))        { g_state.name  = String((const char *)(d["name"]  | "")); sendAck("name",   true); return; }
-    if (!strcmp(cmd, "owner"))       { g_state.owner = String((const char *)(d["name"]  | "")); sendAck("owner",  true); return; }
-    if (!strcmp(cmd, "unpair"))      { sendAck("unpair", true);  return; }
+    if (!strcmp(cmd, "name"))        {
+      g_state.name = String((const char *)(d["name"] | ""));
+      persist::onPetNameChanged();
+      sendAck("name", true);
+      return;
+    }
+    if (!strcmp(cmd, "owner"))       {
+      g_state.owner = String((const char *)(d["name"] | ""));
+      persist::onOwnerNameChanged();
+      sendAck("owner", true);
+      return;
+    }
+    if (!strcmp(cmd, "unpair"))      {
+      // No bonds yet (encryption stage TBD), but wipe NVS so the
+      // next pairing starts from defaults.
+      persist::wipe();
+      sendAck("unpair", true);
+      return;
+    }
     if (!strcmp(cmd, "char_begin"))  { sendAck("char_begin", false); return; } // not accepting pushes
     // unknown cmd: silent
     return;
@@ -200,4 +217,5 @@ void protocol::sendPermission(const String &id, bool approve) {
   ble_nus::sendLine(s);
   if (approve) g_state.approvals++;
   else g_state.denies++;
+  persist::onApprovalOrDenial();
 }
