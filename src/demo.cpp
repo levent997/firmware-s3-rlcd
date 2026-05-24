@@ -75,6 +75,13 @@ constexpr int N_SCENES = sizeof(SCENES) / sizeof(SCENES[0]);
 uint32_t last_switch_ms = 0;
 int scene_idx = 0;
 uint32_t fake_tokens = 12345;
+
+// BLE connection state captured at the moment demo was toggled on. We only
+// auto-disable demo when the connection state transitions FROM disconnected
+// TO connected after toggle — i.e. a fresh desktop connection. If the user
+// turned demo on while already connected, that was a deliberate choice and
+// we leave it alone until they toggle off or BLE actually drops.
+bool was_connected_at_toggle = false;
 } // namespace
 
 void demo::toggle() {
@@ -83,7 +90,9 @@ void demo::toggle() {
     last_switch_ms = 0;   // force immediate first scene on next tick
     scene_idx = 0;
     fake_tokens = 12345;
-    Serial.println("[demo] ON");
+    was_connected_at_toggle = ble_nus::connected();
+    Serial.printf("[demo] ON (ble was %s)\n",
+                  was_connected_at_toggle ? "connected" : "disconnected");
   } else {
     // Reset transient state so the UI returns to a clean offline frame.
     g_state.total = g_state.running = g_state.waiting = 0;
@@ -100,12 +109,19 @@ void demo::toggle() {
 void demo::tick() {
   if (!g_state.demo_mode) return;
 
-  // Real data wins. If a Claude desktop ever connects we automatically
-  // shut demo mode off so the user sees the real heartbeat.
-  if (ble_nus::connected()) {
-    Serial.println("[demo] auto-off (BLE connected)");
+  // Auto-off only on the rising edge of a *new* BLE connection. Users
+  // toggling demo on a live link want to keep seeing it; users toggling on
+  // while offline expect demo to step aside the moment Claude reconnects.
+  bool now_conn = ble_nus::connected();
+  if (now_conn && !was_connected_at_toggle) {
+    Serial.println("[demo] auto-off (BLE just connected)");
     g_state.demo_mode = false;
     return;
+  }
+  // If BLE drops while demo is on, reset the baseline so the NEXT reconnect
+  // will trigger auto-off correctly.
+  if (!now_conn && was_connected_at_toggle) {
+    was_connected_at_toggle = false;
   }
 
   uint32_t now = millis();

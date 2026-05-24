@@ -285,32 +285,24 @@ void drawBottomBar() {
   u->drawHLine(0, H - BOT_H, W);
   u->setFont(u8g2_font_6x10_tf);
 
+  // The bottom bar is tight (400 px, 6x10 font => ~66 chars max). The right
+  // side eats up ~16 chars for "DEMO heartbeat" / "BLE: advertising", so the
+  // left string has to stay under ~48 chars or it overlaps. Keep it terse.
   bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
   char left[96];
   if (active_prompt) {
     snprintf(left, sizeof(left),
-             "[KEY] APPROVE   [BOOT] DENY   (long-press = open history)");
+             "[KEY] APPROVE  [BOOT] DENY  long=history");   // 40 chars
+  } else if (g_state.view == 0) {
+    snprintf(left, sizeof(left),
+             "[KEY] next  [BOOT] prev  long=history");      // 37 chars
+  } else if (g_state.view == 2) {
+    snprintf(left, sizeof(left),
+             "[KEY] next  [BOOT] prev  long=%s",
+             g_state.demo_mode ? "exit demo" : "demo");      // 35-40 chars
   } else {
-    const char *title;
-    switch (g_state.view) {
-      case 0: title = "MAIN";   break;
-      case 1: title = "USAGE";  break;
-      case 2: title = "SYSTEM"; break;
-      default: title = "?";
-    }
-    if (g_state.view == 0) {
-      snprintf(left, sizeof(left),
-               "[KEY] next   [BOOT] prev   long-press = history   view: %s (%u/3)",
-               title, (unsigned)(g_state.view + 1));
-    } else if (g_state.view == 2) {
-      snprintf(left, sizeof(left),
-               "[KEY] next   [BOOT] prev   long-press = %s   view: %s (%u/3)",
-               g_state.demo_mode ? "exit demo" : "demo mode",
-               title, (unsigned)(g_state.view + 1));
-    } else {
-      snprintf(left, sizeof(left), "[KEY] next   [BOOT] prev   view: %s (%u/3)",
-               title, (unsigned)(g_state.view + 1));
-    }
+    snprintf(left, sizeof(left),
+             "[KEY] next  [BOOT] prev");                     // 23 chars
   }
   u->drawStr(6, H - 5, left);
 
