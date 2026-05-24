@@ -410,11 +410,50 @@ static const char *fmtThousands(unsigned long n, char *buf, size_t n_buf) {
   return buf;
 }
 
+// Like fmtThousands but caps at 5 chars by scaling to K / M units. Used in
+// the dense KPI grid where each cell only has ~7 chars of horizontal room.
+//   <10000          -> "9,999"   (5 chars, full precision)
+//   10K..999K       -> "999K"    (4 chars)
+//   1M..9.9M        -> "9.9M"    (4 chars)
+//   >=10M           -> "12M"     (3 chars, truncate the tenths)
+static const char *fmtCompactTokens(unsigned long n, char *buf, size_t n_buf) {
+  if (n < 10000)        return fmtThousands(n, buf, n_buf);
+  if (n < 1000000)      { snprintf(buf, n_buf, "%luK", n / 1000); return buf; }
+  if (n < 10000000) {
+    unsigned long whole = n / 1000000;
+    unsigned long tenths = (n % 1000000) / 100000;
+    snprintf(buf, n_buf, "%lu.%luM", whole, tenths);
+    return buf;
+  }
+  snprintf(buf, n_buf, "%luM", n / 1000000);
+  return buf;
+}
+
+// Verbose duration: "1h 02m 03s" — readable in the Now line.
 static void fmtDuration(uint32_t secs, char *out, size_t n) {
   uint32_t h = secs / 3600, m = (secs / 60) % 60, s = secs % 60;
   if (h > 0) snprintf(out, n, "%luh %02lum %02lus", (unsigned long)h, (unsigned long)m, (unsigned long)s);
   else if (m > 0) snprintf(out, n, "%lum %02lus", (unsigned long)m, (unsigned long)s);
   else snprintf(out, n, "%lus", (unsigned long)s);
+}
+
+// Compact duration for the KPI grid: stays under 7 chars at any uptime.
+//   <1m   -> "30s"
+//   <1h   -> "30m"
+//   <1d   -> "12h05m"
+//   else  -> "5d12h"
+static void fmtCompactDuration(uint32_t secs, char *out, size_t n) {
+  if (secs < 60)        snprintf(out, n, "%lus", (unsigned long)secs);
+  else if (secs < 3600) snprintf(out, n, "%lum", (unsigned long)(secs / 60));
+  else if (secs < 86400) {
+    snprintf(out, n, "%luh%02lum",
+             (unsigned long)(secs / 3600),
+             (unsigned long)((secs / 60) % 60));
+  } else {
+    snprintf(out, n, "%lud%luh",
+             (unsigned long)(secs / 86400),
+             (unsigned long)((secs / 3600) % 24));
+  }
 }
 
 // Draw a row of N filled / empty pip discs.
@@ -659,14 +698,21 @@ void drawMainView() {
   }
   ry += 14;
 
-  // 2x2 KPI grid (compact)
+  // 2x2 KPI grid (compact).
+  //
+  // Each cell is ~123 px wide on a 400 px display. Label is the 6x10 font
+  // (6 px per char); value is 7x13B (7 px per char). The longest label
+  // here is "session" at 7 chars = 42 px, so the value column starts at
+  // x+50 to give a ~8 px gap. Value strings are kept <= 6 chars via the
+  // compact formatters above so 50 + 42 = 92 px stays inside the cell
+  // even at multi-million-token counts.
   struct Kpi { const char *label; const char *value; };
-  char b_tok[24], b_today[24], b_rate[24], b_up[24];
-  fmtThousands(g_state.tokens, b_tok, sizeof(b_tok));
-  fmtThousands(g_state.tokens_today, b_today, sizeof(b_today));
+  char b_tok[16], b_today[16], b_rate[16], b_up[16];
+  fmtCompactTokens(g_state.tokens, b_tok, sizeof(b_tok));
+  fmtCompactTokens(g_state.tokens_today, b_today, sizeof(b_today));
   unsigned long tpm = g_state.tokens_1h / 60UL;
   snprintf(b_rate, sizeof(b_rate), "%lu/min", tpm);
-  fmtDuration(millis() / 1000, b_up, sizeof(b_up));
+  fmtCompactDuration(millis() / 1000, b_up, sizeof(b_up));
 
   Kpi kpis[4] = {
     {"session", b_tok},
@@ -675,6 +721,7 @@ void drawMainView() {
     {"uptime",  b_up},
   };
   int col_w = (W - rx - 6) / 2;
+  constexpr int VAL_OFFSET = 50;   // x-offset for the value within each cell
   for (int i = 0; i < 4; i++) {
     int col = i % 2, row = i / 2;
     int x = rx + col * col_w;
@@ -682,7 +729,7 @@ void drawMainView() {
     u->setFont(u8g2_font_6x10_tf);
     u->drawStr(x, y, kpis[i].label);
     u->setFont(u8g2_font_7x13B_tf);
-    u->drawStr(x + 40, y, kpis[i].value);
+    u->drawStr(x + VAL_OFFSET, y, kpis[i].value);
   }
   ry += 14 * 2 + 4;
 
