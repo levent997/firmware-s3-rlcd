@@ -2,6 +2,7 @@
 #include "state.h"
 #include "ble_nus.h"
 #include "sprites.h"
+#include "rtc.h"
 #include <pgmspace.h>
 
 namespace {
@@ -1012,11 +1013,19 @@ void drawSystemView() {
 
   if (g_state.time_sync_ms) {
     uint32_t elapsed = (millis() - g_state.time_sync_ms) / 1000U;
-    snprintf(buf, sizeof(buf), "synced %lus ago   tz UTC%+ld:%02ld",
+    const char *rtc_tag = !rtc::isPresent()       ? " RTC:absent"
+                        : rtc::hasValidTime()     ? " RTC:ok"
+                                                  : " RTC:no-vbat";
+    snprintf(buf, sizeof(buf), "synced %lus ago   tz UTC%+ld:%02ld%s",
              (unsigned long)elapsed,
              (long)(g_state.time_offset_sec / 3600),
-             (long)((labs(g_state.time_offset_sec) / 60) % 60));
-  } else strcpy(buf, "not synced (waiting for desktop)");
+             (long)((labs(g_state.time_offset_sec) / 60) % 60),
+             rtc_tag);
+  } else {
+    snprintf(buf, sizeof(buf), "not synced (RTC %s)",
+             rtc::isPresent() ? "present but never written"
+                              : "absent");
+  }
   row("Time", buf);
 
   uint32_t up = millis() / 1000;

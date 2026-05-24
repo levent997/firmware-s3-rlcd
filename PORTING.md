@@ -47,7 +47,7 @@ REFERENCE.md `cmd → ack` 表：
 | `cmd:name` | ✅ + NVS 写盘 | ✅ + NVS 写盘 | |
 | `cmd:owner` | ✅ + NVS 写盘 | ✅ + NVS 写盘 | |
 | `cmd:unpair` | ✅ 清 bond | ✅ 清 bond + 擦 NVS | |
-| 时间同步 `{"time":[...]}` | ✅ + 写入 RTC | ⚠️ 仅内存计算，没写 PCF85063 RTC | **可补强**（PCF85063 已在板） |
+| 时间同步 `{"time":[...]}` | ✅ + 写入 RTC | ✅ 写入 PCF85063 (本地时间)，启动从 RTC 回读种子 g_state | |
 
 REFERENCE.md 折叠协议（folder push）：
 
@@ -142,7 +142,7 @@ REFERENCE.md turn 事件：
 | 蜂鸣器 | ✅ 内置 piezo | ❌（有 ES8311 + 扬声器但未驱动）|
 | 麦克风 | ❌ | ✅ 双麦阵列（未用）|
 | 温湿度 | ❌ | ✅ SHTC3 |
-| 实时时钟 | ✅ AXP192 内置 | ✅ PCF85063 外接（未驱动写入）|
+| 实时时钟 | ✅ AXP192 内置 | ✅ PCF85063 已驱动：BLE time sync → BCD 写盘；启动回读种子 g_state |
 | SD 卡 | ❌ | ✅（未驱动）|
 | 充电检测 | ✅ AXP192 STAT 直读 | ⚠️ 启发式电压趋势 |
 | 屏背光 | ✅ AXP192 可调亮度 | ➖ RLCD 是反射屏无背光 |
@@ -221,10 +221,14 @@ REFERENCE.md turn 事件：
 - 参考代码：`src/xfer.h`（含 9 个 ack 状态机）
 - 价值：能在不重新编译固件的情况下换角色
 
-### P2：Time sync 写入 PCF85063
-- 现在 `{"time":[epoch, tz]}` 只存内存
-- 加 PCF85063 I2C 驱动，写入 RTC 寄存器
-- BLE 断开期间时钟不丢，重连前也能在顶栏显示正确时间
+### ✅ P2：Time sync 写入 PCF85063 — **完成** (本次提交)
+- 新模块 `src/rtc.{h,cpp}` 驱动 PCF85063A @ I2C 0x51（与 SHTC3 共用 Wire 总线）
+- 写：BLE `{"time":[epoch, tz]}` 解析后立刻调用 `rtc::setLocalEpoch(epoch + tz)`
+  - 内部 BCD 编码 → 7 字节连续写到 Seconds/Minutes/.../Years（0x04-0x0A）
+  - 写 Seconds 寄存器顺带把 OS 标志清零
+- 读：`rtc::begin()` 探测 + 清 STOP；启动时若 `hasValidTime()` 则把日历时间换回 local epoch 种子给 `g_state.time_epoch`（offset=0，等真同步覆盖）
+- SYSTEM 视图 Time 行显示 `RTC:ok / RTC:no-vbat / RTC:absent`
+- 实际效果：BLE 断开期间顶栏时间继续走（millis() 推进）；下次启动有 VBAT 时直接从 RTC 读回，无需 BLE 也准
 
 ### ✅ P2：扩 entries 缓冲到 8 条 + 历史浏览 — **完成** (本次提交)
 - `g_state.entries[3]` → `[8]`，`protocol.cpp` 解析 8 条
@@ -300,7 +304,8 @@ REFERENCE.md turn 事件：
 | NVS 持久化 | 100% |
 | Folder push（自定义角色包）| 0% |
 | 菜单 / 设置 / 重置 UI | 0% |
-| Clock 独立屏 + RTC 写入 | 0% |
+| Clock 独立屏 | 0%（顶栏小时钟已驱动） |
+| RTC 写入 (PCF85063) | 100% |
 | 演示模式（fake heartbeat）| 100% |
 
 **两条 P0 通路（加密 + NVS）都已打通**，本机现在**功能等价**于官方固件可以日用。
@@ -317,3 +322,5 @@ REFERENCE.md turn 事件：
 | P1-4 | `c7040d7` | Velocity 直方图（SYSTEM 视图） + mood 联动 |
 | P2-5 | `b6fbf3a` | entries 缓冲 3→8 + 长按 history overlay |
 | P2-6 | `a41352a` | 演示模式 7 场景轮播 + 顶栏 DEMO 角标 |
+| 修 P2-6 | `c812c81` | demo 误退 + 底栏文字重叠修复 |
+| P2-7 | (此提交) | PCF85063 RTC 驱动 + time sync 双向 |

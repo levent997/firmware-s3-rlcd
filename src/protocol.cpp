@@ -2,6 +2,7 @@
 #include "ble_nus.h"
 #include "state.h"
 #include "persist.h"
+#include "rtc.h"
 #include <ArduinoJson.h>
 
 namespace {
@@ -175,6 +176,11 @@ void protocol::handleLine(const String &line) {
       g_state.time_epoch = t[0] | 0;
       g_state.time_offset_sec = t[1] | 0;
       g_state.time_sync_ms = millis();
+      // Persist the local wall-clock into the PCF85063 so the top-bar clock
+      // stays correct across BLE drops and (with VBAT) power-cycles. If the
+      // chip is absent or write fails, we keep going with the in-memory copy.
+      rtc::setLocalEpoch((uint32_t)g_state.time_epoch +
+                         (int32_t)g_state.time_offset_sec);
     }
   }
 

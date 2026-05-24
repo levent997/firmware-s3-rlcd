@@ -8,6 +8,7 @@
 #include "sensors.h"
 #include "persist.h"
 #include "demo.h"
+#include "rtc.h"
 
 BuddyState g_state;
 
@@ -28,7 +29,27 @@ void setup() {
 
   buttons::begin();
   sensors::begin();
+  rtc::begin();
   persist::load();
+
+  // If the RTC has valid time (i.e. either VBAT was preserved across resets
+  // or the desktop has synced us before), seed g_state so the top-bar clock
+  // is correct from t=0, before BLE has a chance to reconnect.
+  //
+  // We pretend (epoch = local_seconds, offset = 0, sync_ms = now). The
+  // top-bar formula `local = epoch + (now - sync_ms) + offset` then yields
+  // the correct local time. A subsequent BLE sync will overwrite with real
+  // (utc_epoch, real_offset) and the formula keeps working.
+  if (rtc::hasValidTime()) {
+    uint32_t local_seconds = 0;
+    if (rtc::readLocalEpoch(&local_seconds)) {
+      g_state.time_epoch = local_seconds;
+      g_state.time_offset_sec = 0;
+      g_state.time_sync_ms = millis();
+      Serial.printf("[rtc] seeded clock from chip (local epoch %lu)\n",
+                    (unsigned long)local_seconds);
+    }
+  }
 
   // Advertise with a Claude- prefix so the desktop picker filters to us.
   uint64_t mac = ESP.getEfuseMac();
