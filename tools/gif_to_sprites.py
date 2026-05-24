@@ -27,11 +27,16 @@ MAX_FRAMES = 8         # cap to keep flash usage reasonable
 # Name in C => filename. Order matters only for readability.
 SPRITES = [
     ("idle",         "clawd-idle.gif"),
-    ("building",     "clawd-building.gif"),    # used for WORKING state (better than typing)
+    ("idle_reading", "clawd-idle-reading.gif"),
+    ("bubble",       "clawd-bubble.gif"),
+    ("building",     "clawd-building.gif"),
     ("typing",       "clawd-typing.gif"),
     ("thinking",     "clawd-thinking.gif"),
+    ("sweeping",     "clawd-sweeping.gif"),
+    ("juggling",     "clawd-juggling.gif"),
     ("happy",        "clawd-happy.gif"),
     ("notification", "clawd-notification.gif"),
+    ("double_jump",  "clawd-react-double-jump.gif"),
     ("error",        "clawd-error.gif"),
     ("sleeping",     "clawd-sleeping.gif"),
 ]

@@ -23,23 +23,40 @@ SpriteId moodToSprite() {
   if (g_state.msg.length()) {
     String m = g_state.msg; m.toLowerCase();
     if (m.indexOf("error") >= 0 || m.indexOf("fail") >= 0) return SPR_ERROR;
+    if (m.indexOf("compact") >= 0) return SPR_SWEEPING;
     if (m.indexOf("done") >= 0 || m.indexOf("success") >= 0) {
       if (g_state.running == 0) return SPR_HAPPY;
     }
   }
-  if (g_state.running > 0) return SPR_BUILDING;   // building animation reads better than typing at 128px
-  if (g_state.waiting > 0) return SPR_THINKING;
+  // 2+ sessions running = juggling (matches state-mapping.md tiers)
+  if (g_state.running >= 2) return SPR_JUGGLING;
+  if (g_state.running > 0)  return SPR_BUILDING;
+  if (g_state.waiting > 0)  return SPR_THINKING;
   return SPR_IDLE;
 }
 
 // When connected and genuinely idle (no sessions, no prompt) for a while,
 // cycle through ALL animations on the main view so you can preview them.
 SpriteId showcaseSprite() {
+  // Showcase order roughly matches the lifecycle: wake → think → build →
+  // ship → celebrate → rest. The reading/bubble/sweeping variants drop in
+  // between for visual variety.
   static const SpriteId cycle[] = {
-    SPR_IDLE, SPR_BUILDING, SPR_TYPING, SPR_THINKING, SPR_HAPPY,
-    SPR_NOTIFICATION, SPR_ERROR, SPR_SLEEPING,
+    SPR_IDLE,
+    SPR_IDLE_READING,
+    SPR_BUBBLE,
+    SPR_THINKING,
+    SPR_TYPING,
+    SPR_BUILDING,
+    SPR_JUGGLING,
+    SPR_SWEEPING,
+    SPR_NOTIFICATION,
+    SPR_HAPPY,
+    SPR_DOUBLE_JUMP,
+    SPR_ERROR,
+    SPR_SLEEPING,
   };
-  constexpr uint32_t per_sprite_ms = 6000;
+  constexpr uint32_t per_sprite_ms = 5000;
   uint32_t now = millis();
   int idx = (now / per_sprite_ms) % (sizeof(cycle) / sizeof(cycle[0]));
   return cycle[idx];
@@ -57,10 +74,15 @@ const char *moodLabel(SpriteId s) {
   switch (s) {
     case SPR_SLEEPING:     return "OFFLINE";
     case SPR_IDLE:         return "READY";
+    case SPR_IDLE_READING: return "READING";
+    case SPR_BUBBLE:       return "THINKING";
     case SPR_BUILDING:     return "WORKING";
     case SPR_TYPING:       return "TYPING";
     case SPR_THINKING:     return "THINKING";
+    case SPR_SWEEPING:     return "COMPACT";
+    case SPR_JUGGLING:     return "JUGGLING";
     case SPR_HAPPY:        return "DONE";
+    case SPR_DOUBLE_JUMP:  return "CELEBRATE";
     case SPR_ERROR:        return "ERROR";
     case SPR_NOTIFICATION: return "APPROVE?";
     default:               return "";
@@ -258,21 +280,21 @@ void drawWrappedText(int x, int y, int max_w, int line_h, const String &text, in
   }
 }
 
-// Derive a single mood adjective from energy + state.
+// Derive a single mood adjective from energy tier (0..5) + state.
 static const char *moodAdjective() {
-  int e = (int)g_state.energy;
+  int e = (int)g_state.energy_tier;
   bool running = g_state.running > 0;
   bool waiting = g_state.waiting > 0;
   bool offline = !ble_nus::connected();
   if (offline)                  return "asleep";
   if (g_state.prompt.active)    return "alert";
   if (waiting)                  return "pensive";
-  if (running && e >= 70)       return "focused";
-  if (running && e >= 35)       return "steady";
+  if (running && e >= 4)        return "focused";
+  if (running && e >= 2)        return "steady";
   if (running)                  return "weary";
-  if (e >= 85)                  return "spry";
-  if (e >= 55)                  return "content";
-  if (e >= 25)                  return "drowsy";
+  if (e >= 5)                   return "spry";
+  if (e >= 3)                   return "content";
+  if (e >= 1)                   return "drowsy";
   return "tired";
 }
 
@@ -292,16 +314,21 @@ static void fmtDuration(uint32_t secs, char *out, size_t n) {
   else snprintf(out, n, "%lus", (unsigned long)s);
 }
 
-// --- Main view: dashboard layout ---
-// Sprite + state pill on the left, vital signs (mood/energy) + live metrics on the right,
-// recent activity panel along the bottom.
-void drawMainView() {
-  SpriteId mood;
-  bool showcase = inShowcase();
-  if (showcase) mood = showcaseSprite();
-  else          mood = moodToSprite();
+// Draw a row of N filled / empty pip discs.
+static void drawPips(int x, int y, int n, int filled, int radius, int spacing) {
+  for (int i = 0; i < n; i++) {
+    int cx = x + i * spacing + radius;
+    if (i < filled) u->drawDisc(cx, y, radius);
+    else            u->drawCircle(cx, y, radius);
+  }
+}
 
-  // ===== Left column: sprite + name plate =====
+// --- Main view: dashboard layout ---
+void drawMainView() {
+  bool idle_carousel = inShowcase();
+  SpriteId mood = idle_carousel ? showcaseSprite() : moodToSprite();
+
+  // ===== Left column: sprite + state pill =====
   int spr_x = 8;
   int spr_y = TOP_H + 4;
   drawSprite(spr_x, spr_y, mood);
@@ -312,40 +339,59 @@ void drawMainView() {
   u->drawRBox(spr_x, pill_y, SPRITE_W, 22, 4);
   u->setDrawColor(0);
   u->setFont(u8g2_font_helvB14_tf);
-  const char *label = showcase ? "DEMO" : moodLabel(mood);
+  const char *label = moodLabel(mood);
   int lw = u->getStrWidth(label);
   u->drawStr(spr_x + (SPRITE_W - lw) / 2, pill_y + 16, label);
   u->setDrawColor(1);
 
   // ===== Right column: vital signs =====
-  int rx = spr_x + SPRITE_W + 14;
-  int ry = TOP_H + 8;
+  int rx = spr_x + SPRITE_W + 12;
+  int ry = TOP_H + 6;
+  char buf[64];
 
   // Mood (big italic)
-  u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(rx, ry + 12, "Mood");
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(rx, ry + 10, "Mood");
   u->setFont(u8g2_font_logisoso24_tr);
-  u->drawStr(rx + 68, ry + 18, moodAdjective());
+  u->drawStr(rx + 50, ry + 18, moodAdjective());
+  ry += 24;
+
+  // Energy as 5 pips (matches the M5StickC reference model)
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(rx, ry + 10, "Energy");
+  drawPips(rx + 50, ry + 6, 5, g_state.energy_tier, 5, 14);
+  snprintf(buf, sizeof(buf), "%d/5", g_state.energy_tier);
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(rx + 50 + 5 * 14 + 6, ry + 10, buf);
+  ry += 16;
+
+  // Fed as 10 small pips. fed = (tokens % 50000) / 5000
+  uint8_t fed = (uint8_t)((g_state.tokens % TOKENS_PER_LEVEL) / TOKENS_PER_FED_PIP);
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(rx, ry + 10, "Fed");
+  drawPips(rx + 50, ry + 6, 10, fed, 3, 8);
+  snprintf(buf, sizeof(buf), "%u/10", (unsigned)fed);
+  u->setFont(u8g2_font_6x10_tf);
+  u->drawStr(rx + 50 + 10 * 8 + 6, ry + 10, buf);
+  ry += 16;
+
+  // Level (large)
+  u->setFont(u8g2_font_6x13B_tf);
+  u->drawStr(rx, ry + 10, "Level");
+  u->setFont(u8g2_font_logisoso24_tr);
+  snprintf(buf, sizeof(buf), "%lu", (unsigned long)g_state.level);
+  u->drawStr(rx + 50, ry + 18, buf);
+  // Next-level token countdown to the right
+  u->setFont(u8g2_font_6x10_tf);
+  uint32_t to_next = TOKENS_PER_LEVEL - (g_state.tokens % TOKENS_PER_LEVEL);
+  snprintf(buf, sizeof(buf), "%lu tok to L%lu",
+           (unsigned long)to_next, (unsigned long)(g_state.level + 1));
+  u->drawStr(rx + 100, ry + 18, buf);
   ry += 28;
 
-  // Energy bar
-  u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(rx, ry + 12, "Energy");
-  char buf[64];
-  snprintf(buf, sizeof(buf), "%d%%", (int)g_state.energy);
-  int pw = u->getStrWidth(buf);
-  u->drawStr(W - pw - 8, ry + 12, buf);
-  int bar_x = rx + 68, bar_w = (W - 8) - (rx + 68) - (pw + 8);
-  if (bar_w > 40) {
-    drawProgressBar(bar_x, ry + 4, bar_w, 12, (int)g_state.energy);
-  }
-  ry += 22;
-
-  // Live metrics block
+  // Divider then Now line
   u->drawHLine(rx, ry, W - rx - 6);
   ry += 12;
-
-  // "Now" — current activity descriptor + duration
   u->setFont(u8g2_font_6x13B_tf);
   u->drawStr(rx, ry, "Now");
   u->setFont(u8g2_font_7x13_tf);
@@ -359,70 +405,56 @@ void drawMainView() {
     snprintf(buf, sizeof(buf), "%d session%s for %s",
              g_state.running, g_state.running == 1 ? "" : "s", d);
     u->drawStr(rx + 44, ry, buf);
-  } else if (showcase) {
-    snprintf(buf, sizeof(buf), "demo: %s", moodLabel(mood));
-    u->drawStr(rx + 44, ry, buf);
   } else if (!ble_nus::connected()) {
-    u->drawStr(rx + 44, ry, "offline — waiting to pair");
+    u->drawStr(rx + 44, ry, g_state.napping ? "offline, napping (energy refilling)" : "offline, will nap in <5 min");
   } else {
     u->drawStr(rx + 44, ry, g_state.total > 0 ? "idle (sessions parked)" : "all clear");
   }
   ry += 14;
 
-  // Stats grid: 2 cols x 3 rows of small KPIs
+  // 2x2 KPI grid (compact)
   struct Kpi { const char *label; const char *value; };
-  char b_tok[24], b_today[24], b_5h[24], b_rate[24], b_turns[24], b_up[24];
+  char b_tok[24], b_today[24], b_rate[24], b_up[24];
   fmtThousands(g_state.tokens, b_tok, sizeof(b_tok));
   fmtThousands(g_state.tokens_today, b_today, sizeof(b_today));
-  fmtThousands(g_state.tokens_5h, b_5h, sizeof(b_5h));
-  unsigned long tpm = (g_state.tokens_1h * 60UL) / 3600UL; // /60 simplifies; rough mean tok/min over last hr
+  unsigned long tpm = g_state.tokens_1h / 60UL;
   snprintf(b_rate, sizeof(b_rate), "%lu/min", tpm);
-  snprintf(b_turns, sizeof(b_turns), "%lu", (unsigned long)g_state.turns_done);
   fmtDuration(millis() / 1000, b_up, sizeof(b_up));
 
-  Kpi kpis[6] = {
+  Kpi kpis[4] = {
     {"session", b_tok},
     {"today",   b_today},
-    {"5h",      b_5h},
     {"rate",    b_rate},
-    {"turns",   b_turns},
     {"uptime",  b_up},
   };
   int col_w = (W - rx - 6) / 2;
-  for (int i = 0; i < 6; i++) {
-    int col = i % 2;
-    int row = i / 2;
+  for (int i = 0; i < 4; i++) {
+    int col = i % 2, row = i / 2;
     int x = rx + col * col_w;
-    int y = ry + row * 16;
+    int y = ry + row * 14;
     u->setFont(u8g2_font_6x10_tf);
     u->drawStr(x, y, kpis[i].label);
     u->setFont(u8g2_font_7x13B_tf);
     u->drawStr(x + 40, y, kpis[i].value);
   }
-  ry += 16 * 3 + 2;
+  ry += 14 * 2 + 4;
 
-  // ===== Bottom band: Recent activity + status sentence =====
-  int ey = pill_y + 26;            // start below the sprite pill
-  if (ey < ry) ey = ry + 4;
+  // ===== Bottom band: Recent activity =====
+  int ey = pill_y + 28;
+  if (ey < ry) ey = ry + 2;
   u->drawHLine(6, ey, W - 12);
   ey += 12;
   u->setFont(u8g2_font_6x13B_tf);
   u->drawStr(6, ey, "Recent activity");
-  // status sentence right-side same row
   u->setFont(u8g2_font_6x10_tf);
   if (g_state.msg.length()) {
     String m = "msg: " + g_state.msg;
-    if (m.length() > 36) m = m.substring(0, 35) + "~";
+    if (m.length() > 38) m = m.substring(0, 37) + "~";
     int mw = u->getStrWidth(m.c_str());
     u->drawStr(W - mw - 6, ey, m.c_str());
-  } else {
-    const char *m = showcase ? "demo mode" : "—";
-    int mw = u->getStrWidth(m);
-    u->drawStr(W - mw - 6, ey, m);
   }
   ey += 4;
 
-  // entries
   u->setFont(u8g2_font_7x13_tf);
   int line_y = ey + 14;
   int rows = 0;
@@ -438,7 +470,7 @@ void drawMainView() {
   }
   if (rows == 0) {
     u->setFont(u8g2_font_6x10_tf);
-    u->drawStr(8, line_y, "(no messages yet — recent transcript will appear here)");
+    u->drawStr(8, line_y, "(no messages yet — transcript will appear here)");
   }
 }
 
@@ -728,8 +760,10 @@ void drawSystemView() {
            up / 3600, (up / 60) % 60, up % 60, (unsigned long)g_state.turns_done);
   row("Uptime", buf);
 
-  snprintf(buf, sizeof(buf), "energy %d%%   mood: %s",
-           (int)g_state.energy, moodAdjective());
+  snprintf(buf, sizeof(buf), "energy %u/5   level %lu   mood %s",
+           (unsigned)g_state.energy_tier,
+           (unsigned long)g_state.level,
+           moodAdjective());
   row("Stats", buf);
 
   // ---- Memory section with bars ----

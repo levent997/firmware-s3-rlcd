@@ -46,12 +46,33 @@ struct BuddyState {
   uint8_t view = 0;                // 0=main, 1=usage
   uint32_t anim_frame = 0;
 
-  // Derived "tamagotchi" stats — gives the buddy personality.
-  float energy = 80.0f;            // 0..100, ticks down while working, up while idle
+  // Derived "tamagotchi" stats — modelled on the M5StickC reference
+  // firmware (src/stats.h in the parent project).
+  //
+  //   Energy: 0..5 tiers. Boots at 3. Drains 1 tier per 2 h of being
+  //           awake. Refilled to 5 when the buddy "naps" (we use
+  //           BLE disconnected > 5 min as the nap trigger, since this
+  //           board has no IMU for face-down detection).
+  //   Fed:    0..9 pips. = (tokens % 50000) / 5000.
+  //   Level:  tokens / 50000. Triggers a celebrate on level-up.
+  uint8_t energy_tier = 3;         // 0..5
+  uint32_t last_nap_end_ms = 0;    // millis() when nap last ended
+  uint8_t energy_at_nap = 3;       // tier we restored to at last nap end
+  uint32_t nap_started_ms = 0;     // BLE-disconnect anchor for nap detection
+  bool napping = false;
+
+  uint32_t fed_baseline_tokens = 0;  // initial seen tokens, subtracted
+  bool fed_synced = false;
+  uint32_t level = 0;
+
   uint32_t run_started_ms = 0;     // millis() when running first went > 0 (this turn)
   uint32_t last_turn_ms = 0;       // last time we saw a completion
   uint32_t last_activity_ms = 0;   // last time we saw running/waiting > 0 or new msg
   uint32_t turns_done = 0;         // local counter of completed turns this boot
 };
+
+constexpr uint32_t TOKENS_PER_LEVEL = 50000;
+constexpr uint32_t TOKENS_PER_FED_PIP = 5000;
+
 
 extern BuddyState g_state;

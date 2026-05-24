@@ -66,30 +66,56 @@ void loop() {
     Serial.printf("[ui] view=%u (prev)\n", (unsigned)g_state.view);
   }
 
-  // Energy / mood ticker — once per second.
+  // Tamagotchi stats — aligned with the M5StickC reference firmware
+  // (src/stats.h in the parent project).
+  //
+  //   energy_tier: 0..5, drains 1 tier per 2 h awake, refills to 5 on nap end.
+  //   level:       tokens / 50,000.
+  //   fed:         derived from tokens, not stored here.
+  //
+  // Nap trigger on this board (no IMU): BLE has been disconnected for >5 min.
   {
     static uint32_t last_tick = 0;
     uint32_t now = millis();
     if (now - last_tick > 1000) {
       last_tick = now;
+
       bool active = (g_state.running > 0 || g_state.waiting > 0);
       if (active) {
-        g_state.energy -= 0.10f;                    // ~12 min full → 0 under sustained load
         if (g_state.run_started_ms == 0) g_state.run_started_ms = now;
         g_state.last_activity_ms = now;
-      } else if (ble_nus::connected()) {
-        g_state.energy += 0.05f;                    // slow recovery while idle
-        if (g_state.run_started_ms) {
-          g_state.turns_done++;
-          g_state.last_turn_ms = now;
-          g_state.run_started_ms = 0;
-          g_state.energy += 2.0f;                   // satisfaction bonus on completion
+      } else if (g_state.run_started_ms) {
+        // running just dropped to 0 → count a completed turn
+        g_state.turns_done++;
+        g_state.last_turn_ms = now;
+        g_state.run_started_ms = 0;
+      }
+
+      // Nap detection: BLE disconnected for sustained period.
+      if (!ble_nus::connected()) {
+        if (g_state.nap_started_ms == 0) g_state.nap_started_ms = now;
+        if (!g_state.napping && (now - g_state.nap_started_ms) > 5UL * 60 * 1000) {
+          g_state.napping = true;
         }
       } else {
-        g_state.energy += 0.20f;                    // deep recovery when offline
+        if (g_state.napping) {
+          // Nap ended — restore energy to full.
+          g_state.energy_at_nap = 5;
+          g_state.last_nap_end_ms = now;
+          g_state.napping = false;
+        }
+        g_state.nap_started_ms = 0;
       }
-      if (g_state.energy < 0)   g_state.energy = 0;
-      if (g_state.energy > 100) g_state.energy = 100;
+
+      // Energy tier: drain 1 per 2 h since last nap end (or boot).
+      uint32_t hours_since = (now - g_state.last_nap_end_ms) / 3600000UL;
+      int e = (int)g_state.energy_at_nap - (int)(hours_since / 2);
+      if (e < 0) e = 0;
+      if (e > 5) e = 5;
+      g_state.energy_tier = (uint8_t)e;
+
+      // Level (derived; recompute every tick is fine, monotonic-ish).
+      g_state.level = g_state.tokens / TOKENS_PER_LEVEL;
     }
   }
 
