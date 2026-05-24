@@ -1,0 +1,13 @@
+# Custom partition layout for the 16 MB flash on ESP32-S3-WROOM-1-N16R8.
+#
+# Layout: single-OTA app slot of 4 MB plus an 11.8 MB LittleFS data
+# partition for pushed character packs. Keeps NVS at the default 0x9000
+# offset so existing persisted data (tokens, names, counters) survives a
+# partition table swap.
+#
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x5000,
+otadata,    data, ota,      0xe000,    0x2000,
+app0,       app,  ota_0,    0x10000,   0x400000,
+littlefs,   data, spiffs,   0x410000,  0xBE0000,
+coredump,   data, coredump, 0xFF0000,  0x10000,

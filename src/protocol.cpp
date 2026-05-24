@@ -3,6 +3,7 @@
 #include "state.h"
 #include "persist.h"
 #include "rtc.h"
+#include "xfer.h"
 #include <ArduinoJson.h>
 
 namespace {
@@ -206,7 +207,21 @@ void protocol::handleLine(const String &line) {
       sendAck("unpair", true);
       return;
     }
-    if (!strcmp(cmd, "char_begin"))  { sendAck("char_begin", false); return; } // not accepting pushes
+    // Folder-push protocol (REFERENCE.md §folder). Delegate the 5-cmd
+    // state machine to xfer. Each cmd gets its own per-step ack.
+    if (!strcmp(cmd, "char_begin") ||
+        !strcmp(cmd, "file")       ||
+        !strcmp(cmd, "chunk")      ||
+        !strcmp(cmd, "file_end")   ||
+        !strcmp(cmd, "char_end")) {
+      JsonDocument ack;
+      if (xfer::handleCmd(cmd, d, ack)) {
+        String s;
+        serializeJson(ack, s);
+        ble_nus::sendLine(s);
+      }
+      return;
+    }
     // unknown cmd: silent
     return;
   }

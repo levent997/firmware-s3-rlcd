@@ -3,6 +3,7 @@
 #include "ble_nus.h"
 #include "sprites.h"
 #include "rtc.h"
+#include "xfer.h"
 #include <pgmspace.h>
 
 namespace {
@@ -1033,11 +1034,23 @@ void drawSystemView() {
            up / 3600, (up / 60) % 60, up % 60, (unsigned long)g_state.turns_done);
   row("Uptime", buf);
 
-  snprintf(buf, sizeof(buf), "energy %u/5   level %lu   mood %s",
-           (unsigned)g_state.energy_tier,
-           (unsigned long)g_state.level,
-           moodAdjective());
-  row("Stats", buf);
+  // Storage — useful once char packs start landing in LittleFS. Replaces
+  // the old "Stats" row whose energy/level/mood text was redundant with
+  // the MAIN view dashboard.
+  {
+    unsigned long fs_tot  = xfer::fsTotalBytes();
+    unsigned long fs_used = xfer::fsUsedBytes();
+    if (fs_tot > 0) {
+      String tot_s  = fmtBytes(fs_tot);
+      String used_s = fmtBytes(fs_used);
+      int pct = (int)((uint64_t)fs_used * 100UL / fs_tot);
+      snprintf(buf, sizeof(buf), "LittleFS %s / %s  (%d%%)",
+               used_s.c_str(), tot_s.c_str(), pct);
+    } else {
+      strcpy(buf, "LittleFS unavailable");
+    }
+    row("Storage", buf);
+  }
 
   // ---- Memory section with bars ----
   int my = y + 6;

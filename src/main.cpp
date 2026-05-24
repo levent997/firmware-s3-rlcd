@@ -9,6 +9,7 @@
 #include "persist.h"
 #include "demo.h"
 #include "rtc.h"
+#include "xfer.h"
 
 BuddyState g_state;
 
@@ -30,6 +31,7 @@ void setup() {
   buttons::begin();
   sensors::begin();
   rtc::begin();
+  xfer::begin();
   persist::load();
 
   // If the RTC has valid time (i.e. either VBAT was preserved across resets
