@@ -1815,8 +1815,8 @@ static void drawMenu() {
   // Title bar
   u->drawBox(0, 0, W, TOP_H);
   u->setDrawColor(0);
-  u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(8, 16, "Settings");
+  u->setFont(u8g2_font_wqy14_t_gb2312);
+  u->drawUTF8(8, 16, "设置");
   u->setFont(u8g2_font_6x10_tf);
   // Subtitle counter
   char sub[16];
@@ -1840,14 +1840,14 @@ static void drawMenu() {
     if (menu::itemIsDestructive(i)) {
       u->drawStr(14, y + 18, "!");
     }
-    // Label
-    u->drawStr(28, y + 18, menu::itemLabel(i));
-    // Inline value (for toggles like Sound: ON/OFF), right-aligned
+    // Label (Chinese -> drawUTF8 + wqy14)
+    u->setFont(u8g2_font_wqy14_t_gb2312);
+    u->drawUTF8(28, y + 18, menu::itemLabel(i));
+    // Inline value (e.g. Sound 开/关), right-aligned
     const char *val = menu::itemValue(i);
     if (val && val[0]) {
-      u->setFont(u8g2_font_helvB14_tf);
-      int vw = u->getStrWidth(val);
-      u->drawStr(W - vw - 16, y + 18, val);
+      int vw = u->getUTF8Width(val);
+      u->drawUTF8(W - vw - 16, y + 18, val);
     }
     u->setDrawColor(1);
     y += row_h;
@@ -1900,15 +1900,14 @@ static void drawMenuConfirm() {
   u->drawBox(bang_x, tri_top + 16, 4, 22);
   u->drawBox(bang_x, tri_top + 42, 4, 4);
 
-  // Title + body to the right of the icon
+  // Title + body to the right of the icon (Chinese -> drawUTF8 + wqy14).
   int tx = icon_x + tri_size + 18;
-  u->setFont(u8g2_font_helvB18_tf);
-  u->drawStr(tx, TOP_H + 24, menu::confirmTitle());
+  u->setFont(u8g2_font_wqy14_t_gb2312);
+  u->drawUTF8(tx, TOP_H + 22, menu::confirmTitle());
 
-  // Body — split on \n manually because drawStr doesn't.
-  u->setFont(u8g2_font_7x13_tf);
+  // Body — split on '\n' manually (newline is ASCII, safe inside UTF-8).
   const char *body = menu::confirmBody();
-  int line_y = TOP_H + 50;
+  int line_y = TOP_H + 48;
   const char *line_start = body;
   while (*line_start) {
     const char *nl = strchr(line_start, '\n');
@@ -1917,8 +1916,8 @@ static void drawMenuConfirm() {
     if (line_len > (int)sizeof(tmp) - 1) line_len = sizeof(tmp) - 1;
     memcpy(tmp, line_start, line_len);
     tmp[line_len] = 0;
-    u->drawStr(tx, line_y, tmp);
-    line_y += 16;
+    u->drawUTF8(tx, line_y, tmp);
+    line_y += 18;
     if (!nl) break;
     line_start = nl + 1;
   }

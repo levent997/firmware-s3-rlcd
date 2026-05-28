@@ -16,13 +16,14 @@ enum Item {
   ITEM_COUNT
 };
 
+// UTF-8 Chinese labels — rendered via drawUTF8 + wqy14 in ui.cpp.
 const char *LABELS[ITEM_COUNT] = {
-  "Sound",
-  "Reset stats",
-  "Remove packs",
-  "Factory reset",
-  "Reboot",
-  "Cancel / close",
+  "声音",
+  "重置统计",
+  "删除角色包",
+  "恢复出厂",
+  "重启",
+  "取消 / 关闭",
 };
 
 // True if activating the item requires the second-press confirm screen.
@@ -169,7 +170,7 @@ const char *menu::itemLabel(int idx) {
   return LABELS[idx];
 }
 const char *menu::itemValue(int idx) {
-  if (idx == ITEM_SOUND) return g_state.sound_on ? "ON" : "OFF";
+  if (idx == ITEM_SOUND) return g_state.sound_on ? "开" : "关";
   return "";
 }
 bool menu::itemIsDestructive(int idx) {
@@ -179,27 +180,27 @@ bool menu::itemIsDestructive(int idx) {
 
 const char *menu::confirmTitle() {
   switch (g_state.menu_selected) {
-    case ITEM_RESET_STATS:   return "Reset usage stats?";
-    case ITEM_REMOVE_PACKS:  return "Remove all character packs?";
-    case ITEM_FACTORY_RESET: return "Factory reset?";
-    case ITEM_REBOOT:        return "Reboot device?";
-    default:                 return "Confirm?";
+    case ITEM_RESET_STATS:   return "重置使用统计？";
+    case ITEM_REMOVE_PACKS:  return "删除全部角色包？";
+    case ITEM_FACTORY_RESET: return "恢复出厂设置？";
+    case ITEM_REBOOT:        return "重启设备？";
+    default:                 return "确认？";
   }
 }
 const char *menu::confirmBody() {
   switch (g_state.menu_selected) {
     case ITEM_RESET_STATS:
-      return "Zeros tokens, level, approvals, denies, turns,\n"
-             "velocity ring. Keeps name, owner, sound, bonds,\n"
-             "and character packs.";
+      return "清零 tokens、等级、批准/拒绝、轮次、\n"
+             "响应时延环。保留名称、主人、声音、\n"
+             "配对绑定与角色包。";
     case ITEM_REMOVE_PACKS:
-      return "Erases every /<pack>/ directory on LittleFS.\n"
-             "Active sprites stay in PSRAM until reboot.";
+      return "删除 LittleFS 上所有 /<包名>/ 目录。\n"
+             "已激活的精灵在重启前仍留在 PSRAM。";
     case ITEM_FACTORY_RESET:
-      return "Wipes EVERYTHING: NVS settings, BLE bonds,\n"
-             "LittleFS packs. Device will reboot.";
+      return "清除全部：NVS 设置、BLE 绑定、\n"
+             "LittleFS 角色包。设备将重启。";
     case ITEM_REBOOT:
-      return "Soft restart. NVS data preserved.";
+      return "软重启，NVS 数据保留。";
     default:
       return "";
   }
