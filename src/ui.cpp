@@ -869,7 +869,7 @@ void drawMainView() {
   int ey = pill_y + 28;
   if (ey < ry) ey = ry + 2;
   u->drawHLine(6, ey, W - 12);
-  ey += 12;
+  ey += 14;   // +14 (was 12): wqy14 msg is 14px tall, +12 made its top touch the divider
   u->setFont(u8g2_font_6x13B_tf);
   u->drawStr(6, ey, "Recent activity");
   // msg + transcript entries are received text that may contain Chinese —
@@ -883,9 +883,12 @@ void drawMainView() {
   }
   ey += 4;
 
+  // Show up to 5 transcript lines (entries[] holds 8; the long-press history
+  // overlay still shows all 8). 5 * 14px fits between here (~218) and the
+  // bottom bar (282).
   int line_y = ey + 14;
   int rows = 0;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 5; i++) {
     if (g_state.entries[i].length()) {
       u->setFont(u8g2_font_wqy14_t_gb2312);
       u->drawUTF8(8, line_y, clipUTF8("> " + g_state.entries[i], W - 14).c_str());
