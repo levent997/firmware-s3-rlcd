@@ -352,23 +352,58 @@ void drawBottomBar() {
   u->drawStr(W - rw - 6, H - 5, r);
 }
 
+// --- UTF-8 / CJK text helpers ---
+// Byte length of the UTF-8 character whose lead byte is c.
+static int utf8CharLen(unsigned char c) {
+  if ((c & 0x80) == 0)    return 1;
+  if ((c & 0xE0) == 0xC0) return 2;
+  if ((c & 0xF0) == 0xE0) return 3;
+  if ((c & 0xF8) == 0xF0) return 4;
+  return 1;  // invalid lead — advance 1 byte to make progress
+}
+
+// Truncate a UTF-8 string to fit `max_w` px in the CURRENTLY-SET font,
+// appending "~" if it was cut. Splits only on character boundaries so a
+// multi-byte glyph is never sliced (which would render as mojibake). The
+// caller must set the font first (we measure with getUTF8Width).
+static String clipUTF8(const String &text, int max_w) {
+  if (u->getUTF8Width(text.c_str()) <= max_w) return text;
+  int tilde = u->getUTF8Width("~");
+  int i = 0, n = text.length();
+  String acc;
+  while (i < n) {
+    int clen = utf8CharLen((unsigned char)text[i]);
+    if (i + clen > n) clen = n - i;
+    String cand = acc + text.substring(i, i + clen);
+    if (u->getUTF8Width(cand.c_str()) + tilde > max_w) break;
+    acc = cand;
+    i += clen;
+  }
+  return acc + "~";
+}
+
+// Word/character-wrap UTF-8 text with the wqy14 CJK font. Latin words wrap at
+// spaces; CJK (no spaces) wraps at the character that would overflow max_w.
 void drawWrappedText(int x, int y, int max_w, int line_h, const String &text, int max_lines) {
   if (text.length() == 0) return;
-  u8g2_uint_t cw = u->getMaxCharWidth();
-  if (cw == 0) cw = 7;
-  int chars_per_line = max_w / cw;
-  if (chars_per_line < 8) chars_per_line = 8;
-  int i = 0, line = 0;
-  while (i < (int)text.length() && line < max_lines) {
-    int end = i + chars_per_line;
-    if (end >= (int)text.length()) end = text.length();
-    else {
-      int sp = text.lastIndexOf(' ', end);
-      if (sp > i + 6) end = sp;
+  u->setFont(u8g2_font_wqy14_t_gb2312);
+  int i = 0, n = text.length(), line = 0;
+  while (i < n && line < max_lines) {
+    int line_start = i, last_space = -1;
+    String acc;
+    while (i < n) {
+      int clen = utf8CharLen((unsigned char)text[i]);
+      if (i + clen > n) clen = n - i;
+      String cand = acc + text.substring(i, i + clen);
+      if (u->getUTF8Width(cand.c_str()) > max_w) break;
+      if (text[i] == ' ') last_space = i;
+      acc = cand;
+      i += clen;
     }
-    u->drawStr(x, y + line * line_h, text.substring(i, end).c_str());
-    i = end;
-    while (i < (int)text.length() && text[i] == ' ') i++;
+    int line_end = i;
+    if (i < n && last_space > line_start) { line_end = last_space; i = last_space; }
+    u->drawUTF8(x, y + line * line_h, text.substring(line_start, line_end).c_str());
+    while (i < n && text[i] == ' ') i++;
     line++;
   }
 }
@@ -595,13 +630,12 @@ static void drawApprovalView() {
   u->drawStr(rx, ry + 28, "APPROVE?");
   ry += 42;
 
-  u->setFont(u8g2_font_helvB14_tf);
+  u->setFont(u8g2_font_wqy14_t_gb2312);
   String tool = "Tool: " + (g_state.prompt.tool.length() ? g_state.prompt.tool : String("(unknown)"));
-  u->drawStr(rx, ry, tool.c_str());
+  u->drawUTF8(rx, ry, clipUTF8(tool, W - rx - 8).c_str());
   ry += 18;
 
-  // Hint, wrapped over multiple lines
-  u->setFont(u8g2_font_7x13_tf);
+  // Hint, wrapped over multiple lines (drawWrappedText sets wqy14 itself).
   drawWrappedText(rx, ry, W - rx - 8, 14, g_state.prompt.hint, 5);
   ry += 14 * 5 + 6;
 
@@ -762,8 +796,8 @@ void drawMainView() {
   u->drawStr(rx, ry, "Now");
   u->setFont(u8g2_font_7x13_tf);
   if (g_state.prompt.active) {
-    String s = "approval: " + g_state.prompt.tool;
-    u->drawStr(rx + 44, ry, s.c_str());
+    u->setFont(u8g2_font_wqy14_t_gb2312);
+    u->drawUTF8(rx + 44, ry, clipUTF8("approval: " + g_state.prompt.tool, W - rx - 50).c_str());
   } else if (g_state.running > 0) {
     char d[24];
     uint32_t secs = g_state.run_started_ms ? (millis() - g_state.run_started_ms) / 1000 : 0;
@@ -838,24 +872,23 @@ void drawMainView() {
   ey += 12;
   u->setFont(u8g2_font_6x13B_tf);
   u->drawStr(6, ey, "Recent activity");
-  u->setFont(u8g2_font_6x10_tf);
+  // msg + transcript entries are received text that may contain Chinese —
+  // render with the CJK font (drawUTF8) and clip on UTF-8 char boundaries so
+  // multibyte glyphs aren't sliced into mojibake.
   if (g_state.msg.length()) {
-    String m = "msg: " + g_state.msg;
-    if (m.length() > 38) m = m.substring(0, 37) + "~";
-    int mw = u->getStrWidth(m.c_str());
-    u->drawStr(W - mw - 6, ey, m.c_str());
+    u->setFont(u8g2_font_wqy14_t_gb2312);
+    String m = clipUTF8("msg: " + g_state.msg, 230);
+    int mw = u->getUTF8Width(m.c_str());
+    u->drawUTF8(W - mw - 6, ey, m.c_str());
   }
   ey += 4;
 
-  u->setFont(u8g2_font_7x13_tf);
   int line_y = ey + 14;
   int rows = 0;
   for (int i = 0; i < 3; i++) {
     if (g_state.entries[i].length()) {
-      String s = "> " + g_state.entries[i];
-      int max_chars = (W - 14) / 7;
-      if ((int)s.length() > max_chars) s = s.substring(0, max_chars - 1) + "~";
-      u->drawStr(8, line_y, s.c_str());
+      u->setFont(u8g2_font_wqy14_t_gb2312);
+      u->drawUTF8(8, line_y, clipUTF8("> " + g_state.entries[i], W - 14).c_str());
       rows++;
     }
     line_y += 14;
@@ -864,11 +897,8 @@ void drawMainView() {
     // Official M5StickC behaviour: when `entries` is empty, fall back to
     // showing the `msg` field as the recent line.
     if (g_state.msg.length()) {
-      u->setFont(u8g2_font_7x13_tf);
-      String s = "> " + g_state.msg;
-      int max_chars = (W - 14) / 7;
-      if ((int)s.length() > max_chars) s = s.substring(0, max_chars - 1) + "~";
-      u->drawStr(8, ey + 14, s.c_str());
+      u->setFont(u8g2_font_wqy14_t_gb2312);
+      u->drawUTF8(8, ey + 14, clipUTF8("> " + g_state.msg, W - 14).c_str());
     } else {
       u->setFont(u8g2_font_6x10_tf);
       u->drawStr(8, ey + 14, linkActive()
@@ -1741,22 +1771,14 @@ static void drawHistoryOverlay() {
   u->setFont(u8g2_font_helvB14_tf);
   u->drawStr(8, 16, "Transcript history");
 
+  // Just the filled-slot count in the corner. (The msg used to be embedded
+  // here but byte-truncating a Chinese msg into a fixed buffer produced
+  // mojibake; msg is shown on the MAIN view anyway.)
   int filled = 0;
   for (int i = 0; i < 8; i++) if (g_state.entries[i].length()) filled++;
-  char ctitle[24];
-  if (g_state.msg.length()) {
-    snprintf(ctitle, sizeof(ctitle), "%d/8  msg: %s", filled, g_state.msg.c_str());
-  } else {
-    snprintf(ctitle, sizeof(ctitle), "%d/8", filled);
-  }
-  // Truncate if too wide to fit.
+  char ctitle[16];
+  snprintf(ctitle, sizeof(ctitle), "%d/8", filled);
   u->setFont(u8g2_font_6x13B_tf);
-  int title_w = u->getStrWidth(ctitle);
-  int max_w = W - u->getStrWidth("Transcript history") - 24;
-  if (title_w > max_w) {
-    int chars = max_w / 7;
-    if (chars > 4) { ctitle[chars - 1] = '~'; ctitle[chars] = 0; }
-  }
   int tw = u->getStrWidth(ctitle);
   u->drawStr(W - tw - 8, 16, ctitle);
   u->setDrawColor(1);
@@ -1773,14 +1795,10 @@ static void drawHistoryOverlay() {
     u->setFont(u8g2_font_6x13B_tf);
     u->drawStr(8, y + 14, label);
 
-    u->setFont(u8g2_font_7x13_tf);
     if (g_state.entries[i].length()) {
-      String s = g_state.entries[i];
-      // Single line per row, truncate with "~" if too wide.
-      int avail = W - 40;
-      int max_chars = avail / 7;
-      if ((int)s.length() > max_chars) s = s.substring(0, max_chars - 1) + "~";
-      u->drawStr(34, y + 14, s.c_str());
+      // CJK-capable, UTF-8-safe single-line truncation.
+      u->setFont(u8g2_font_wqy14_t_gb2312);
+      u->drawUTF8(34, y + 14, clipUTF8(g_state.entries[i], W - 40).c_str());
     } else {
       u->setFont(u8g2_font_6x10_tf);
       u->drawStr(34, y + 14, "(empty)");

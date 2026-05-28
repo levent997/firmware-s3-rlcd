@@ -9,32 +9,25 @@
 #include <ArduinoJson.h>
 
 namespace {
-// Sanitise a string for Latin-1 fonts. Replaces UTF-8 multi-byte sequences
-// with a single space (not '?', so the line stays readable) and collapses
-// runs of whitespace. Keeps the line even if some characters were lost so
-// the user still sees tool calls / timestamps embedded in mixed content.
-//
-// Mirrors the M5StickC reference firmware's behaviour, which never drops
-// entries — it just renders whatever bytes it gets. We replace non-ASCII
-// bytes with spaces (rather than rendering raw and getting mojibake)
-// because our font is Latin-1 only.
-String asciiOnly(const char *s) {
+// Sanitise an incoming transcript/message string. UTF-8 is PRESERVED (the UI
+// now renders with a GB2312 CJK font via drawUTF8, so Chinese shows instead
+// of being stripped). We only normalise the ASCII control range: tabs and
+// other control bytes (<0x20) and DEL become spaces, and runs of spaces are
+// collapsed. Multi-byte UTF-8 (>=0x80) passes through verbatim so it stays a
+// valid sequence for drawUTF8.
+String sanitizeText(const char *s) {
   String out;
   if (!s) return out;
   out.reserve(strlen(s));
   bool last_space = false;
   for (const uint8_t *p = (const uint8_t *)s; *p; ++p) {
-    char emit = 0;
-    if (*p >= 0x20 && *p < 0x7F) {
-      emit = (char)*p;
-    } else if (*p == '\t') {
-      emit = ' ';
-    } else if (*p >= 0x80) {
-      // UTF-8 lead byte: collapse the whole sequence to a single space
-      if ((*p & 0xC0) == 0xC0) emit = ' ';
-      // continuation bytes (0x80..0xBF) are silently dropped
+    uint8_t c = *p;
+    if (c >= 0x80) {              // UTF-8 byte — keep verbatim
+      out += (char)c;
+      last_space = false;
+      continue;
     }
-    if (emit == 0) continue;
+    char emit = (c >= 0x20 && c < 0x7F) ? (char)c : ' ';  // control/tab/DEL -> space
     if (emit == ' ') {
       if (last_space) continue;
       last_space = true;
@@ -43,9 +36,7 @@ String asciiOnly(const char *s) {
     }
     out += emit;
   }
-  // Trim trailing whitespace.
   while (out.length() && out[out.length() - 1] == ' ') out.remove(out.length() - 1);
-  // Trim leading whitespace.
   while (out.length() && out[0] == ' ') out.remove(0, 1);
   return out;
 }
@@ -94,7 +85,7 @@ void handleHeartbeat(JsonDocument &d) {
   g_state.running = d["running"] | 0;
   g_state.waiting = d["waiting"] | 0;
   updateTokenWindows(d["tokens"] | 0);
-  String new_msg = asciiOnly(d["msg"] | "");
+  String new_msg = sanitizeText(d["msg"] | "");
   // Audible buzz on transitions INTO an error message (don't spam on
   // every heartbeat that repeats the same error).
   {
@@ -113,7 +104,7 @@ void handleHeartbeat(JsonDocument &d) {
   int i = 0;
   for (JsonVariant v : ents) {
     if (i >= 8) break;
-    g_state.entries[i++] = asciiOnly(v | "");
+    g_state.entries[i++] = sanitizeText(v | "");
   }
 
   JsonVariant pr = d["prompt"];
@@ -126,8 +117,8 @@ void handleHeartbeat(JsonDocument &d) {
     }
     g_state.prompt.active = true;
     g_state.prompt.id = new_id;
-    g_state.prompt.tool = asciiOnly(pr["tool"] | "");
-    g_state.prompt.hint = asciiOnly(pr["hint"] | "");
+    g_state.prompt.tool = sanitizeText(pr["tool"] | "");
+    g_state.prompt.hint = sanitizeText(pr["hint"] | "");
   } else {
     g_state.prompt.active = false;
     g_state.prompt.id = "";
