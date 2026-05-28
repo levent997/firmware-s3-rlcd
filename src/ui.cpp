@@ -877,9 +877,9 @@ void drawMainView() {
   // multibyte glyphs aren't sliced into mojibake.
   if (g_state.msg.length()) {
     u->setFont(u8g2_font_wqy14_t_gb2312);
-    String m = clipUTF8("msg: " + g_state.msg, 230);
+    String m = clipUTF8("msg: " + g_state.msg, 224);
     int mw = u->getUTF8Width(m.c_str());
-    u->drawUTF8(W - mw - 6, ey, m.c_str());
+    u->drawUTF8(W - mw - 12, ey, m.c_str());   // 12 px right margin (was 6)
   }
   ey += 4;
 
@@ -1684,10 +1684,11 @@ void drawClockView() {
       int lw = u->getUTF8Width(label);
       u->drawUTF8(cx + (card_w - lw) / 2, cards_y + 12, label);
       u->setDrawColor(1);
-      // Value centred in the ~25 px below the 15 px label band.
+      // Value centred in the ~25 px below the 15 px label band. Baseline at
+      // +35 leaves a few px gap under the band so the digits don't touch it.
       u->setFont(u8g2_font_helvB18_tf);
       int vw = u->getStrWidth(value);
-      u->drawStr(cx + (card_w - vw) / 2, cards_y + 33, value);
+      u->drawStr(cx + (card_w - vw) / 2, cards_y + 35, value);
     };
 
     char b1[16], b2[16], b3[16];
