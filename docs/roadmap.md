@@ -44,9 +44,11 @@ MCP 云控制、LVGL。
 
 ### 阶段 1 — 续电池主题,高价值低成本
 
-- 🔵 **1.1 light-sleep** — 主循环空闲进 light-sleep / esp_pm 自动 light-sleep,降空闲电流
-- ⬜ **1.2 屏超时 + 断连深睡** — 无交互 N 分钟停 LCD 刷新;BLE 断连超时进 deep-sleep,按键唤醒
-- ⬜ **1.3 日志分级** — LOG_LEVEL 宏,release 编译期裁掉 debug 打印
+- ✅ **1.1 light-sleep** — `esp_pm_configure` 自动 light-sleep(DFS 40-80MHz + tickless idle,与 BLE 控制器协调)。Arduino 2.0.17 若 `CONFIG_PM_ENABLE` 关则 no-op 并打日志,固定 80MHz
+- ✅ **1.2 断连深睡** — BLE 断连 **且** 无按键 > `IDLE_DEEP_SLEEP_MS`(默认 30min,0=关)进 deep-sleep,睡前画 "Sleeping" 屏,KEY(GPIO18 ext1 ALL_LOW)唤醒后重启从 NVS/RTC 恢复
+- ✅ **1.3 日志分级** — `src/log.h` 的 `LOGE/LOGI/LOGD` + `LOG_LEVEL` 编译期裁剪;`[hb]`/`<-` 改 LOGD;platformio.ini 注明 release 用 `-DLOG_LEVEL=1`
+
+> 说明:阶段 1 未做"awake 时屏超时"。反射屏无背光、靠内容保持,冻结时钟会显示过期时间反而困惑;改为靠 1.1 自动 light-sleep 降 awake 空闲功耗 + 1.2 长时间断连直接深睡。
 
 ### 阶段 2 — 质量与健壮性
 
@@ -71,3 +73,5 @@ MCP 云控制、LVGL。
 | 日期 | commit | 内容 |
 |---|---|---|
 | 2026-05-28 | `430cba5` | 基线:电池 SOC 精度 + 充电冻结 + 降功耗 + CLOCK 视图重设计 |
+| 2026-05-28 | `3534438` | docs: 新增 roadmap.md |
+| 2026-05-28 | (本次) | 阶段 1 完成:自动 light-sleep + 断连深睡 + 日志分级。已烧录 COM3 |

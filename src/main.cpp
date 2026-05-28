@@ -14,14 +14,46 @@
 #include "audio.h"
 #include "imu.h"
 #include "menu.h"
+#include "log.h"
+#include "esp_pm.h"
+#include "esp32s3/pm.h"   // Arduino-ESP32 2.0.x = IDF 4.4: chip-specific pm config type
+#include "esp_sleep.h"
+#include "driver/rtc_io.h"
 
 BuddyState g_state;
 
 static ST7305_U8g2 lcd(11, 12, 5, 40, 41);
 
+// --- Power management knobs ---
+// Enter deep sleep when BLE has been disconnected AND no button has been
+// pressed for this long. The reflective LCD holds its last (sleeping)
+// frame; a KEY press wakes via ext1 and the device reboots (~2 s) and
+// reloads stats from NVS + time from the RTC chip. Set to 0 to disable
+// (keep the device always-on as a desk clock even when disconnected).
+constexpr uint32_t IDLE_DEEP_SLEEP_MS = 30UL * 60 * 1000;   // 30 min
+constexpr int PIN_KEY_WAKE = 18;                            // KEY button, RTC-capable
+
+static uint32_t g_last_button_ms = 0;
+
 static void onLine(const String &line) {
-  Serial.print("<- "); Serial.println(line);
+  LOGD("<- %s\n", line.c_str());
   protocol::handleLine(line);
+}
+
+static void enterDeepSleep() {
+  LOGI("[pm] deep sleep (idle %lu ms); KEY (GPIO%d) wakes\n",
+       (unsigned long)IDLE_DEEP_SLEEP_MS, PIN_KEY_WAKE);
+  ui::showSleeping();
+  delay(50);
+  Serial.flush();
+  // KEY is active-LOW with a pull-up. Hold the pull-up in the RTC domain so
+  // the pin idles HIGH and a press pulls it LOW to trigger ext1 wake.
+  rtc_gpio_pullup_en((gpio_num_t)PIN_KEY_WAKE);
+  rtc_gpio_pulldown_dis((gpio_num_t)PIN_KEY_WAKE);
+  // IDF 4.4 ext1 on S3 offers ALL_LOW / ANY_HIGH (no ANY_LOW). With a
+  // single pin in the mask, ALL_LOW == "this pin is low" == button pressed.
+  esp_sleep_enable_ext1_wakeup(1ULL << PIN_KEY_WAKE, ESP_EXT1_WAKEUP_ALL_LOW);
+  esp_deep_sleep_start();
 }
 
 // Loop-rate sampler: counts iterations between 1 s windows so the SYSTEM
@@ -44,6 +76,27 @@ void setup() {
   delay(200);
   Serial.printf("\nESP32-S3-RLCD Claude buddy starting (cpu=%u MHz)\n",
                 (unsigned)getCpuFrequencyMhz());
+
+  // Report deep-sleep wake so the logs explain the ~2 s reboot.
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1) {
+    LOGI("[pm] woke from deep sleep (KEY press)\n");
+  }
+
+  // Try to enable automatic light sleep (dynamic-freq scaling + tickless
+  // idle, coordinated with the BLE controller so the link survives). Stock
+  // Arduino-ESP32 builds often ship with CONFIG_PM_ENABLE off, in which
+  // case esp_pm_configure() returns ESP_ERR_NOT_SUPPORTED and we just keep
+  // the fixed 80 MHz. Logged either way so we know which path we got.
+  {
+    esp_pm_config_esp32s3_t pm = {};
+    pm.max_freq_mhz = 80;
+    pm.min_freq_mhz = 40;
+    pm.light_sleep_enable = true;
+    esp_err_t rc = esp_pm_configure(&pm);
+    LOGI("[pm] esp_pm_configure -> %s (auto light-sleep %s)\n",
+         esp_err_to_name(rc),
+         rc == ESP_OK ? "ON" : "unavailable, fixed 80MHz");
+  }
 
   lcd.begin(0, U8G2_R1);
   ui::begin(lcd.getU8g2());
@@ -122,6 +175,7 @@ void loop() {
   // PMIC's OUTH/KEY pin, not a GPIO — it cannot be read from firmware.
   buttons::Event ev = buttons::poll();
   if (ev != buttons::NONE) {
+    g_last_button_ms = millis();   // any interaction defers idle deep sleep
     bool active_prompt = g_state.prompt.active && g_state.prompt.id.length();
     if (menu::isOpen()) {
       // Menu owns all button input while open.
@@ -246,22 +300,34 @@ void loop() {
   }
 
   // Heartbeat print so we can confirm the device is alive whenever monitor
-  // opens. Dialled down from every 5 s -> every 30 s when nothing's
-  // happening; serial printf to USB-CDC keeps the host's USB stack busy
-  // and the printf path itself is non-trivial at 80 MHz.
+  // opens. Dialled down to every 30 s, and LOGD so a release build
+  // (-DLOG_LEVEL<3) compiles it out entirely — the periodic USB-CDC write
+  // keeps the host stack (and our USB PHY) awake and drawing current.
   static uint32_t last_hb = 0;
   if (millis() - last_hb > 30000) {
     last_hb = millis();
-    Serial.printf("[hb] up=%lus cpu=%u connected=%d total=%d running=%d waiting=%d prompt=%d heap=%lu bat=%.2fV(%d%%) chg=%c loopHz=%lu\n",
-                  (unsigned long)(millis() / 1000),
-                  (unsigned)getCpuFrequencyMhz(),
-                  ble_nus::connected() ? 1 : 0,
-                  g_state.total, g_state.running, g_state.waiting,
-                  g_state.prompt.active ? 1 : 0,
-                  (unsigned long)ESP.getFreeHeap(),
-                  g_state.battery_v, g_state.battery_pct,
-                  g_state.charging_reason,
-                  (unsigned long)diag::loop_hz);
+    LOGD("[hb] up=%lus cpu=%u connected=%d total=%d running=%d waiting=%d prompt=%d heap=%lu bat=%.2fV(%d%%) chg=%c loopHz=%lu\n",
+         (unsigned long)(millis() / 1000),
+         (unsigned)getCpuFrequencyMhz(),
+         ble_nus::connected() ? 1 : 0,
+         g_state.total, g_state.running, g_state.waiting,
+         g_state.prompt.active ? 1 : 0,
+         (unsigned long)ESP.getFreeHeap(),
+         g_state.battery_v, g_state.battery_pct,
+         g_state.charging_reason,
+         (unsigned long)diag::loop_hz);
+  }
+
+  // Idle deep sleep: disconnected AND untouched for IDLE_DEEP_SLEEP_MS.
+  // nap_started_ms is the BLE-disconnect anchor maintained above; require
+  // both it and the last button press to be old enough. Skipped entirely
+  // when IDLE_DEEP_SLEEP_MS == 0 (always-on mode) or while a prompt is up.
+  if (IDLE_DEEP_SLEEP_MS > 0 && !ble_nus::connected() && !g_state.prompt.active) {
+    uint32_t now = millis();
+    bool disc_long = g_state.nap_started_ms &&
+                     (now - g_state.nap_started_ms) > IDLE_DEEP_SLEEP_MS;
+    bool idle_long = (now - g_last_button_ms) > IDLE_DEEP_SLEEP_MS;
+    if (disc_long && idle_long) enterDeepSleep();
   }
 
   delay(20);

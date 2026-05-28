@@ -2067,3 +2067,19 @@ bool ui::render() {
   u->sendBuffer();
   return true;
 }
+
+void ui::showSleeping() {
+  if (!u) return;
+  u->clearBuffer();
+  u->setDrawColor(1);
+  blitScaledSprite(SPR_SLEEPING, (W - 96) / 2, 44, 96);
+  u->setFont(u8g2_font_helvB18_tf);
+  const char *t = "Sleeping";
+  int tw = u->getStrWidth(t);
+  u->drawStr((W - tw) / 2, 188, t);
+  u->setFont(u8g2_font_6x13_tf);
+  const char *t2 = "press KEY to wake";
+  int t2w = u->getStrWidth(t2);
+  u->drawStr((W - t2w) / 2, 212, t2);
+  u->sendBuffer();
+}
