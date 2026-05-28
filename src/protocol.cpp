@@ -5,6 +5,7 @@
 #include "rtc.h"
 #include "xfer.h"
 #include "audio.h"
+#include "token_window.h"
 #include <ArduinoJson.h>
 
 namespace {
@@ -76,63 +77,15 @@ void sendStatusAck() {
   ble_nus::sendLine(s);
 }
 
-// Rolling token window: keep 5 hours of samples at 1-minute granularity.
-// Records cumulative tokens_today (or boot fallback) per sample.
-constexpr int TOK_HISTORY = 300;       // 300 minutes = 5h
-struct TokSample { uint32_t t_ms; uint32_t tokens_cum; };
-TokSample tok_hist[TOK_HISTORY];
-int tok_count = 0;
-int tok_head = 0;
-// UINT32_MAX as sentinel: distinguishes "never seen a heartbeat" from
-// "last heartbeat was 0". Without this, the very first heartbeat after
-// firmware boot would add the desktop's full cumulative (e.g. 184502 tok)
-// to tokens_boot, falsely inflating the local level counter.
-uint32_t last_tokens_seen = UINT32_MAX;
-uint32_t last_sample_ms = 0;
+// Rolling token window lives in the Arduino-free tokenwin::TokenWindow (see
+// src/token_window.* and test/test_token). tokens_boot stays in g_state
+// (NVS-persisted) and is advanced in place; the window keeps the history.
+tokenwin::TokenWindow g_tokwin;
 
 void updateTokenWindows(uint32_t tokens_now) {
-  uint32_t now = millis();
-
-  if (last_tokens_seen == UINT32_MAX) {
-    // First heartbeat after firmware boot — anchor without backfill.
-    last_tokens_seen = tokens_now;
-  } else if (tokens_now < last_tokens_seen) {
-    // Desktop restarted — re-anchor without counting the pre-restart
-    // value as new delta (was a bug: the old code added the post-restart
-    // cumulative to tokens_boot on every desktop restart).
-    last_tokens_seen = tokens_now;
-  } else {
-    uint32_t delta = tokens_now - last_tokens_seen;
-    if (delta > 0) g_state.tokens_boot += delta;
-    last_tokens_seen = tokens_now;
-  }
-
-  // Sample at most once per minute.
-  if (last_sample_ms != 0 && now - last_sample_ms < 60000) {
-    // recompute windows from existing samples plus current cum
-  } else {
-    last_sample_ms = now;
-    tok_hist[tok_head] = { now, g_state.tokens_boot };
-    tok_head = (tok_head + 1) % TOK_HISTORY;
-    if (tok_count < TOK_HISTORY) tok_count++;
-  }
-
-  // Compute windows: find the oldest sample within 1h and 5h windows.
-  auto cumAgo = [&](uint32_t window_ms) -> uint32_t {
-    uint32_t cutoff = (now > window_ms) ? (now - window_ms) : 0;
-    uint32_t cum_at_cutoff = g_state.tokens_boot;  // default to "no data" => 0 diff
-    for (int i = 0; i < tok_count; i++) {
-      int idx = (tok_head - 1 - i + TOK_HISTORY) % TOK_HISTORY;
-      if (tok_hist[idx].t_ms <= cutoff) {
-        cum_at_cutoff = tok_hist[idx].tokens_cum;
-        break;
-      }
-      cum_at_cutoff = tok_hist[idx].tokens_cum;
-    }
-    return g_state.tokens_boot - cum_at_cutoff;
-  };
-  g_state.tokens_1h = cumAgo(60UL * 60UL * 1000UL);
-  g_state.tokens_5h = cumAgo(5UL * 60UL * 60UL * 1000UL);
+  g_tokwin.update(tokens_now, millis(), g_state.tokens_boot);
+  g_state.tokens_1h = g_tokwin.tokens_1h;
+  g_state.tokens_5h = g_tokwin.tokens_5h;
 }
 
 void handleHeartbeat(JsonDocument &d) {
