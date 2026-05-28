@@ -52,7 +52,7 @@ MCP 云控制、LVGL。
 
 ### 阶段 2 — 质量与健壮性
 
-- ⬜ **2.1 主机侧单测** — `[env:native]`,测 protocol 解析 / `lipoSocFromV` / 充电判定 / token 窗口
+- 🔵 **2.1 主机侧单测** — `[env:native]` + Unity 已落地。把 SOC 曲线 + 充电判定状态机抽到无 Arduino 依赖的 `src/battery_math.{h,cpp}`(`BatteryEstimator`),`sensors.cpp` 改为委托调用。`test/test_battery/` 7 个用例全过,含核心的"插电 SOC 冻结"回归测试。主机编译器:WinLibs MinGW g++ 16.1.0(winget 用户作用域)。**待补**:protocol 解析 / token 窗口的测试
 - ⬜ **2.2 CI** — GitHub Actions:`pio run` + `pio test -e native` + clang-format dry-run
 - ⬜ **2.3 看门狗** — task watchdog;BLE 回调 / GIF 解码超时保护
 
@@ -75,3 +75,4 @@ MCP 云控制、LVGL。
 | 2026-05-28 | `430cba5` | 基线:电池 SOC 精度 + 充电冻结 + 降功耗 + CLOCK 视图重设计 |
 | 2026-05-28 | `3534438` | docs: 新增 roadmap.md |
 | 2026-05-28 | (本次) | 阶段 1 完成:自动 light-sleep + 断连深睡 + 日志分级。已烧录 COM3 |
+| 2026-05-28 | (本次) | 阶段 2.1:抽取 battery_math + BatteryEstimator,加 native env + 7 个 Unity 单测(全过)。固件重构后编译通过、已烧录 |
