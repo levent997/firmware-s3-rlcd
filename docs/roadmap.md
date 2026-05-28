@@ -53,8 +53,8 @@ MCP 云控制、LVGL。
 ### 阶段 2 — 质量与健壮性
 
 - 🔵 **2.1 主机侧单测** — `[env:native]` + Unity 已落地。把 SOC 曲线 + 充电判定状态机抽到无 Arduino 依赖的 `src/battery_math.{h,cpp}`(`BatteryEstimator`),`sensors.cpp` 改为委托调用。`test/test_battery/` 7 个用例全过,含核心的"插电 SOC 冻结"回归测试。主机编译器:WinLibs MinGW g++ 16.1.0(winget 用户作用域)。**待补**:protocol 解析 / token 窗口的测试
-- ⬜ **2.2 CI** — GitHub Actions:`pio run` + `pio test -e native` + clang-format dry-run
-- ⬜ **2.3 看门狗** — task watchdog;BLE 回调 / GIF 解码超时保护
+- ✅ **2.2 CI** — `.github/workflows/build.yml`:`pio run -e esp32-s3-rlcd-42`(硬门)+ `pio test -e native`(硬门)+ clang-format(advisory,`continue-on-error`,排除生成的 sprites.h)。`.clang-format` = LLVM 基底 2 空格/100 列/指针右贴,贴近现有风格
+- ✅ **2.3 看门狗** — 软件看门狗(`main.cpp`):core0 监控任务,`loop()` 每轮戳 `g_loop_alive_ms`,停摆 > 30s 则 `esp_restart()`。超时取 30s 以免误杀阻塞数秒的 GIF 解码。未用 IDF 4.4 的 TWDT(其 5s 超时被启动代码锁定、改不动)
 
 ### 阶段 3 — 架构改进(可选)
 
@@ -76,3 +76,4 @@ MCP 云控制、LVGL。
 | 2026-05-28 | `3534438` | docs: 新增 roadmap.md |
 | 2026-05-28 | (本次) | 阶段 1 完成:自动 light-sleep + 断连深睡 + 日志分级。已烧录 COM3 |
 | 2026-05-28 | (本次) | 阶段 2.1:抽取 battery_math + BatteryEstimator,加 native env + 7 个 Unity 单测(全过)。固件重构后编译通过、已烧录 |
+| 2026-05-28 | (本次) | 阶段 2.2 + 2.3:GitHub Actions CI(build+test 硬门 / clang-format advisory)+ .clang-format;软件看门狗(core0,30s)。测试通过、固件已烧录 |

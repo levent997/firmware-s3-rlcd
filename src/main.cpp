@@ -18,6 +18,7 @@
 #include "esp_pm.h"
 #include "esp32s3/pm.h"   // Arduino-ESP32 2.0.x = IDF 4.4: chip-specific pm config type
 #include "esp_sleep.h"
+#include "esp_system.h"   // esp_restart
 #include "driver/rtc_io.h"
 
 BuddyState g_state;
@@ -54,6 +55,30 @@ static void enterDeepSleep() {
   // single pin in the mask, ALL_LOW == "this pin is low" == button pressed.
   esp_sleep_enable_ext1_wakeup(1ULL << PIN_KEY_WAKE, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
+}
+
+// --- Software watchdog ---
+// The Arduino loop() runs on core 1; this monitor task is pinned to core 0
+// so it keeps running even if the loop task is wedged (deadlocked BLE
+// callback, runaway decode, ...). loop() stamps g_loop_alive_ms every
+// iteration; if that goes stale past WDT_TIMEOUT_MS we reboot. The timeout
+// is deliberately generous so a legitimately slow GIF-pack decode (which
+// blocks the loop for a few seconds) never trips it.
+constexpr uint32_t WDT_TIMEOUT_MS = 30000;
+static volatile uint32_t g_loop_alive_ms = 0;
+
+static void watchdogTask(void *) {
+  for (;;) {
+    vTaskDelay(pdMS_TO_TICKS(5000));
+    uint32_t alive = g_loop_alive_ms;
+    if (alive == 0) continue;                  // loop() not running yet
+    uint32_t age = millis() - alive;
+    if (age > WDT_TIMEOUT_MS) {
+      LOGE("[wdt] loop stalled %lu ms -> reboot\n", (unsigned long)age);
+      delay(20);
+      esp_restart();
+    }
+  }
 }
 
 // Loop-rate sampler: counts iterations between 1 s windows so the SYSTEM
@@ -140,10 +165,16 @@ void setup() {
   ble_nus::begin(name, onLine);
 
   Serial.print("Advertising as "); Serial.println(name);
+
+  // Software watchdog on core 0 (loop runs on core 1).
+  g_loop_alive_ms = millis();
+  xTaskCreatePinnedToCore(watchdogTask, "wdt", 2048, nullptr, 5, nullptr, 0);
+
   ui::render();
 }
 
 void loop() {
+  g_loop_alive_ms = millis();   // feed the software watchdog
   ble_nus::loop();
   sensors::loop();
   imu::loop();

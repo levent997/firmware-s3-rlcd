@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # Hard gates — a red build here means the firmware won't compile or a
+      # unit test regressed.
+      - name: Build firmware
+        run: pio run -e esp32-s3-rlcd-42
+
+      - name: Unit tests (native)
+        run: pio test -e native
+
+      # Advisory only: reports formatting drift without failing the build, so
+      # we can adopt clang-format gradually. sprites.h is generated, skip it.
+      - name: clang-format (advisory)
+        continue-on-error: true
+        run: |
+          sudo apt-get update && sudo apt-get install -y clang-format
+          FILES=$(ls src/*.cpp src/*.h test/test_battery/*.cpp | grep -v 'sprites.h')
+          clang-format --dry-run --Werror $FILES

@@ -1,0 +1,8 @@
+# Roughly matches the existing hand-written style: 2-space indent, attached
+# braces, pointer/ref bound to the name (`String &x`). Generated sprites.h is
+# excluded in CI (it's machine-emitted, never hand-edited).
+BasedOnStyle: LLVM
+IndentWidth: 2
+ColumnLimit: 100
+PointerAlignment: Right
+DerivePointerAlignment: false
