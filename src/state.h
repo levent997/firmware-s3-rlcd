@@ -41,9 +41,16 @@ struct BuddyState {
   uint32_t denies = 0;
 
   // Local sensors / clock
-  int battery_pct = -1;            // -1 = unknown
-  float battery_v = 0.0f;
+  int battery_pct = -1;            // -1 = unknown (displayed SOC; frozen while charging)
+  float battery_v = 0.0f;          // EWMA-filtered cell voltage (what UI should trust)
+  float battery_v_raw = 0.0f;      // most recent single 5-s sample, unfiltered
+  float battery_pin_mv = 0.0f;     // raw ADC mV at GPIO4 (pre-divider). bat_v ≈ pin_mv/1000 * 3
   bool charging = false;           // heuristic: voltage trending up or near-full
+  // Charge heuristic diagnostic — which condition fired this tick. One of:
+  //   'F' near-full (>4.18 V)   'U' trending up over 60s (Δ ≥ 30 mV)   '-' none
+  char  charging_reason = '-';
+  float battery_dv_60s = 0.0f;     // (now - 60s ago) voltage delta; positive = rising
+  uint32_t battery_samples = 0;    // total sensors::loop() ticks since boot (sanity)
   float temp_c = NAN;
   float humidity_pct = NAN;
   uint32_t time_epoch = 0;         // last synced epoch seconds

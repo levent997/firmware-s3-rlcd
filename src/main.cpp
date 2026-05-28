@@ -24,10 +24,26 @@ static void onLine(const String &line) {
   protocol::handleLine(line);
 }
 
+// Loop-rate sampler: counts iterations between 1 s windows so the SYSTEM
+// view can show the actual achieved loop frequency. Defined here so we
+// can update it from inside loop() without polluting state.h with a
+// purely-diagnostic counter that other modules never read.
+namespace diag {
+  volatile uint32_t loop_hz = 0;
+}
+
 void setup() {
+  // Drop CPU from default 240 MHz to 80 MHz. The workload here is tiny
+  // (BLE NUS + a 5 Hz UI refresh + occasional ADC/I2C reads) so the
+  // higher clock just burns ~40-60 mA of idle current. 80 MHz is still
+  // plenty for the worst-case path (GIF decode in pack::tick) — that
+  // path is already gated on a new pack arriving and runs once per push.
+  setCpuFrequencyMhz(80);
+
   Serial.begin(115200);
   delay(200);
-  Serial.println("\nESP32-S3-RLCD Claude buddy starting");
+  Serial.printf("\nESP32-S3-RLCD Claude buddy starting (cpu=%u MHz)\n",
+                (unsigned)getCpuFrequencyMhz());
 
   lcd.begin(0, U8G2_R1);
   ui::begin(lcd.getU8g2());
@@ -216,16 +232,36 @@ void loop() {
 
   ui::render();
 
-  // Heartbeat print so we can confirm the device is alive whenever monitor opens.
+  // Loop-rate counter: count iters per 1 s window, publish to diag::loop_hz.
+  {
+    static uint32_t window_start = 0;
+    static uint32_t iters = 0;
+    iters++;
+    uint32_t now = millis();
+    if (now - window_start >= 1000) {
+      diag::loop_hz = iters;
+      iters = 0;
+      window_start = now;
+    }
+  }
+
+  // Heartbeat print so we can confirm the device is alive whenever monitor
+  // opens. Dialled down from every 5 s -> every 30 s when nothing's
+  // happening; serial printf to USB-CDC keeps the host's USB stack busy
+  // and the printf path itself is non-trivial at 80 MHz.
   static uint32_t last_hb = 0;
-  if (millis() - last_hb > 5000) {
+  if (millis() - last_hb > 30000) {
     last_hb = millis();
-    Serial.printf("[hb] up=%lus connected=%d total=%d running=%d waiting=%d prompt=%d heap=%lu\n",
+    Serial.printf("[hb] up=%lus cpu=%u connected=%d total=%d running=%d waiting=%d prompt=%d heap=%lu bat=%.2fV(%d%%) chg=%c loopHz=%lu\n",
                   (unsigned long)(millis() / 1000),
+                  (unsigned)getCpuFrequencyMhz(),
                   ble_nus::connected() ? 1 : 0,
                   g_state.total, g_state.running, g_state.waiting,
                   g_state.prompt.active ? 1 : 0,
-                  (unsigned long)ESP.getFreeHeap());
+                  (unsigned long)ESP.getFreeHeap(),
+                  g_state.battery_v, g_state.battery_pct,
+                  g_state.charging_reason,
+                  (unsigned long)diag::loop_hz);
   }
 
   delay(20);

@@ -13,6 +13,14 @@ ble_nus::RxLineHandler g_on_line = nullptr;
 bool g_connected = false;
 String g_rx_accum;
 
+// Advertising interval. Default NimBLE picks ~100 ms which is great for
+// discovery latency but draws meaningfully more current 24/7 — the radio
+// wakes 10x/s. 1000 ms keeps the device discoverable within ~1 s while
+// cutting idle radio current to roughly a tenth. Unit on the NimBLE API
+// is 0.625 ms slots, so 1600 slots = 1000 ms.
+constexpr uint16_t ADV_INTERVAL_MS    = 1000;
+constexpr uint16_t ADV_INTERVAL_SLOTS = (uint16_t)((uint32_t)ADV_INTERVAL_MS * 1000UL / 625UL);
+
 class ServerCB : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     g_connected = true;
@@ -118,12 +126,16 @@ void ble_nus::begin(const String &name, RxLineHandler on_line) {
   adv->addServiceUUID(SVC_UUID);
   adv->setName(name.c_str());
   adv->setScanResponse(true);
+  adv->setMinInterval(ADV_INTERVAL_SLOTS);
+  adv->setMaxInterval(ADV_INTERVAL_SLOTS);
   adv->start();
 }
 
 void ble_nus::loop() {}
 
 bool ble_nus::connected() { return g_connected; }
+
+uint16_t ble_nus::advertisingIntervalMs() { return ADV_INTERVAL_MS; }
 
 void ble_nus::clearBonds() {
   int n = NimBLEDevice::getNumBonds();

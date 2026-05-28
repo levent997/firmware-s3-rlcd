@@ -74,39 +74,147 @@ void sensors::begin() {
   shtc3_cmd(0xB098); // back to sleep
 }
 
+// LiPo voltage -> state-of-charge, piecewise-linear approximation of the
+// typical 1C-discharge curve. Returns 0..100. Tuned for 4.20V full / 3.30V
+// empty; flat mid-band (3.7-4.0V is 30-80%) is what makes a naive linear
+// 0.85 V scaling wildly over-report mid-life and under-report near empty.
+static int lipoSocFromV(float v) {
+  static const float pts[][2] = {
+    {3.30f,   0.0f},
+    {3.50f,   5.0f},
+    {3.65f,  10.0f},
+    {3.70f,  20.0f},
+    {3.75f,  30.0f},
+    {3.80f,  45.0f},
+    {3.85f,  55.0f},
+    {3.90f,  65.0f},
+    {3.95f,  75.0f},
+    {4.00f,  82.0f},
+    {4.05f,  88.0f},
+    {4.10f,  93.0f},
+    {4.15f,  97.0f},
+    {4.20f, 100.0f},
+  };
+  const int N = sizeof(pts) / sizeof(pts[0]);
+  if (v <= pts[0][0])     return 0;
+  if (v >= pts[N - 1][0]) return 100;
+  for (int i = 1; i < N; i++) {
+    if (v < pts[i][0]) {
+      float t = (v - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0]);
+      float s = pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1]);
+      int   r = (int)(s + 0.5f);
+      if (r < 0) r = 0; if (r > 100) r = 100;
+      return r;
+    }
+  }
+  return 100;
+}
+
 void sensors::loop() {
   uint32_t now = millis();
   if (now - last_read_ms < 5000) return;
   last_read_ms = now;
+  g_state.battery_samples++;
 
-  // Battery
-  uint32_t sum = 0;
+  // ---- Battery: read, filter, decide charge state, then assign SOC ----
+  uint32_t sum_mv = 0;
   const int N = 8;
-  for (int i = 0; i < N; i++) sum += analogReadMilliVolts(PIN_BAT);
-  float pin_v = (sum / (float)N) / 1000.0f;
-  float bat_v = pin_v * 3.0f;
-  g_state.battery_v = bat_v;
-  if (bat_v < 3.3f) g_state.battery_pct = 0;
-  else if (bat_v > 4.15f) g_state.battery_pct = 100;
-  else g_state.battery_pct = (int)((bat_v - 3.3f) / 0.85f * 100.0f);
+  for (int i = 0; i < N; i++) sum_mv += analogReadMilliVolts(PIN_BAT);
+  float pin_mv = sum_mv / (float)N;
+  float bat_v_raw = (pin_mv / 1000.0f) * 3.0f;
+  g_state.battery_pin_mv = pin_mv;
+  g_state.battery_v_raw  = bat_v_raw;
+
+  // EWMA across ticks. alpha=0.2 -> ~22 s effective time constant at 5 s
+  // tick. Smooths over BLE-burst voltage sag without lagging real changes
+  // by more than half a minute. First sample seeds the filter directly.
+  static float bv_ewma = 0.0f;
+  if (bv_ewma < 1.0f) bv_ewma = bat_v_raw;
+  else                bv_ewma = bv_ewma + 0.2f * (bat_v_raw - bv_ewma);
+  g_state.battery_v = bv_ewma;
 
   // Charging detection — heuristic since the ETA6098 STAT pin is not
-  // wired to a GPIO. Maintain a 60s circular buffer of voltage samples
-  // (we tick every 5s, so 12 slots = 60s). Charging if any of:
-  //   (a) voltage trending up ≥ 0.03 V over the last 60s
-  //   (b) voltage > 4.18 V (almost full; only true when on charger)
+  // wired to a GPIO. Three triggers, in priority order:
+  //
+  //   (J) one-tick raw rise > 60 mV: catches plug-in INSTANTLY. Without
+  //       this, the only triggers were (F) and (U) below — but (F) only
+  //       fires once you're already near full, and (U) needs 60 s of
+  //       history. So during the first minute of charging starting from
+  //       low SOC, nothing fired and the SOC display tracked rising
+  //       voltage straight up. (This is the bug that produced the
+  //       "10%->20% in 10 s" complaint after the first patch.)
+  //
+  //   (F) raw > 4.18 V: near-full plateau. Always charging in practice.
+  //
+  //   (U) 60-s smoothed-voltage rise > 30 mV: catches slow charging that
+  //       (J) might miss (e.g. low-current trickle, or starting near
+  //       fully-charged), and ride-throughs once (J) has stopped pulsing.
+  //
+  // The result is sticky for STICKY_MS after the last trigger so a brief
+  // load-spike dip mid-charge doesn't unfreeze the gauge.
   static float bv_hist[12] = {0};
   static int   bv_pos = 0;
   static bool  bv_filled = false;
-  float oldest = bv_hist[bv_pos];   // about-to-be-overwritten slot is the oldest
-  bv_hist[bv_pos] = bat_v;
+  float oldest = bv_hist[bv_pos];
+  bv_hist[bv_pos] = bv_ewma;
   bv_pos = (bv_pos + 1) % 12;
   if (bv_pos == 0) bv_filled = true;
 
-  bool charge = false;
-  if (bat_v > 4.18f) charge = true;
-  if (bv_filled && (bat_v - oldest) > 0.03f) charge = true;
-  g_state.charging = charge;
+  static float prev_raw = 0.0f;
+  float raw_step = (prev_raw > 1.0f) ? (bat_v_raw - prev_raw) : 0.0f;
+  prev_raw = bat_v_raw;
+
+  float dv60 = bv_filled ? (bv_ewma - oldest) : 0.0f;
+  bool  triggered = false;
+  char  reason    = '-';
+  if      (raw_step > 0.060f)               { triggered = true; reason = 'J'; }
+  else if (bat_v_raw > 4.18f)               { triggered = true; reason = 'F'; }
+  else if (bv_filled && dv60 > 0.03f)       { triggered = true; reason = 'U'; }
+
+  // Stickiness: hold charging=true for STICKY_MS after the last trigger.
+  // Without this, an inter-tick load spike can flip charge->false for
+  // one tick and the SOC freeze would briefly release, snapping the
+  // displayed % up to whatever lipoSocFromV(bv_ewma) is at that instant.
+  constexpr uint32_t STICKY_MS = 30000;
+  static uint32_t last_trigger_ms = 0;
+  if (triggered) last_trigger_ms = now;
+  bool charge = triggered ||
+                (last_trigger_ms != 0 && (now - last_trigger_ms) < STICKY_MS);
+  if (!triggered && charge) reason = 'S';  // sticky carry-over
+
+  // On falling edge of charge (just unplugged), snap EWMA to the current
+  // raw reading. Otherwise the EWMA is still anchored to the charger's CV
+  // voltage from the last several ticks, and as soon as the freeze
+  // releases the SOC would jump to that stale-high value. Snapping makes
+  // SOC track the cell's actual relaxation curve from t=0 of unplug.
+  static bool was_charge = false;
+  if (was_charge && !charge) bv_ewma = bat_v_raw;
+  was_charge = charge;
+
+  g_state.charging        = charge;
+  g_state.charging_reason = reason;
+  g_state.battery_v       = bv_ewma;   // re-publish, in case snap edited it
+  g_state.battery_dv_60s  = dv60;
+
+  // SOC: when charging, FREEZE the displayed percentage. Cell terminal
+  // voltage during charge is dominated by the charger's CV pin (≈4.05 V
+  // at moderate current, climbing to 4.20 V) which is NOT a meaningful
+  // proxy for true state-of-charge — that's what causes the infamous
+  // "plug in, jumps to 90%" UX. Freeze until either we hit ≥4.18 V
+  // (close to fully charged) or charging stops.
+  int soc_now = lipoSocFromV(bv_ewma);
+  if (charge) {
+    if (g_state.battery_pct < 0) {
+      g_state.battery_pct = soc_now;        // never been read; allow first display
+    } else if (reason == 'F' && bv_ewma >= 4.18f) {
+      // Near-full plateau — allow SOC to climb the last few % so the
+      // UI eventually reads 100%.
+      if (soc_now > g_state.battery_pct) g_state.battery_pct = soc_now;
+    }
+    // else: hold whatever was last shown before charging started
+  } else {
+    g_state.battery_pct = soc_now;
+  }
 
   // SHTC3
   if (shtc3_present) {

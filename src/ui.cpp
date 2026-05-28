@@ -9,6 +9,10 @@
 #include "menu.h"
 #include <pgmspace.h>
 
+// Read-only handle to the loop-rate counter published by main.cpp. Used
+// by the SYSTEM diagnostic view to show the actual achieved loop Hz.
+namespace diag { extern volatile uint32_t loop_hz; }
+
 namespace {
 U8G2 *u = nullptr;
 
@@ -1060,6 +1064,34 @@ static String fmtBytes(unsigned long n) {
 }
 
 // Draw a tiny mascot strip walking back and forth across the bottom.
+// Nearest-neighbour downsample of a 128x128 sprite into an `avatar`-sized
+// box at (x,y), OR-ing source pixels so thin features survive the shrink.
+// Uses the current g_state.anim_frame for the sprite's animation phase.
+static void blitScaledSprite(SpriteId id, int x, int y, int avatar) {
+  const SpriteInfo &info = SPRITES[id];
+  uint8_t frame_idx = g_state.anim_frame % info.frame_count;
+  static uint8_t buf[SPRITE_BYTES];
+  memcpy_P(buf, info.frames[frame_idx], SPRITE_BYTES);
+  for (int oy = 0; oy < avatar; oy++) {
+    int sy0 = oy * SPRITE_H / avatar;
+    int sy1 = (oy + 1) * SPRITE_H / avatar;
+    if (sy1 <= sy0) sy1 = sy0 + 1;
+    for (int ox = 0; ox < avatar; ox++) {
+      int sx0 = ox * SPRITE_W / avatar;
+      int sx1 = (ox + 1) * SPRITE_W / avatar;
+      if (sx1 <= sx0) sx1 = sx0 + 1;
+      bool any = false;
+      for (int sy = sy0; sy < sy1 && !any; sy++) {
+        for (int sx = sx0; sx < sx1 && !any; sx++) {
+          int bit = sy * SPRITE_W + sx;
+          if (buf[bit >> 3] & (1 << (bit & 7))) any = true;
+        }
+      }
+      if (any) u->drawPixel(x + ox, y + oy);
+    }
+  }
+}
+
 static void drawWalkingMascot(int strip_y, int strip_h) {
   constexpr uint32_t period_ms = 16000;
   uint32_t t = millis() % period_ms;
@@ -1082,33 +1114,58 @@ static void drawWalkingMascot(int strip_y, int strip_h) {
   else if (phase < 0.95f)                  id = SPR_THINKING;       // walking left: thinking
   else                                     id = SPR_SLEEPING;
 
-  // Render scaled-down to `avatar` x `avatar`.
-  const SpriteInfo &info = SPRITES[id];
-  uint8_t frame_idx = g_state.anim_frame % info.frame_count;
-  static uint8_t buf[SPRITE_BYTES];
-  memcpy_P(buf, info.frames[frame_idx], SPRITE_BYTES);
-  // Scale 128 -> avatar via nearest-neighbor downsample with OR.
-  for (int oy = 0; oy < avatar; oy++) {
-    int sy0 = oy * SPRITE_H / avatar;
-    int sy1 = (oy + 1) * SPRITE_H / avatar;
-    if (sy1 <= sy0) sy1 = sy0 + 1;
-    for (int ox = 0; ox < avatar; ox++) {
-      int sx0 = ox * SPRITE_W / avatar;
-      int sx1 = (ox + 1) * SPRITE_W / avatar;
-      if (sx1 <= sx0) sx1 = sx0 + 1;
-      bool any = false;
-      for (int sy = sy0; sy < sy1 && !any; sy++) {
-        for (int sx = sx0; sx < sx1 && !any; sx++) {
-          int bit = sy * SPRITE_W + sx;
-          if (buf[bit >> 3] & (1 << (bit & 7))) any = true;
-        }
-      }
-      if (any) u->drawPixel(x + ox, y + oy);
-    }
-  }
+  blitScaledSprite(id, x, y, avatar);
 
   // Floor line under the mascot.
   u->drawHLine(8, y + avatar + 1, W - 16);
+}
+
+// CLOCK-view mascot, repurposed as a DAY-PROGRESS cursor. Its horizontal
+// position encodes how far through the local day we are: left edge = 00:00,
+// right edge = 24:00. The step animation is preserved for liveness, so the
+// pet is simultaneously decoration AND the day-progress readout — instead
+// of a plain progress bar. The pose follows a working-day rhythm keyed to
+// the actual local hour `hh`:
+//   00:00–10:00  dozing  (SPR_SLEEPING)   — pre-work nap
+//   10:00–18:00  working (SPR_BUILDING)   — the work block (TYPING reads
+//                                           as mush on the RLCD at 40px)
+//   18:00–22:00  happy   (SPR_HAPPY)      — clocking off
+//   22:00–24:00  asleep  (SPR_SLEEPING)   — bedtime
+static void drawDayProgressMascot(int strip_y, int day_pct, int hh) {
+  if (day_pct < 0) day_pct = 0;
+  if (day_pct > 100) day_pct = 100;
+
+  const int avatar = 40;
+  int x_min = 34, x_max = W - 34 - avatar;
+  int x = x_min + (x_max - x_min) * day_pct / 100;
+  int floor_y = strip_y + avatar + 2;
+  int y = floor_y - avatar;   // mascot stands ON the floor line
+
+  // The day's timeline: a floor line with start / midday / end ticks.
+  int line_l = x_min, line_r = x_max + avatar;
+  u->drawHLine(line_l, floor_y, line_r - line_l);
+  u->drawVLine(line_l, floor_y - 4, 5);                       // 00:00
+  u->drawVLine(line_r, floor_y - 4, 5);                       // 24:00
+  u->drawVLine((line_l + line_r) / 2, floor_y - 3, 4);        // 12:00
+
+  SpriteId id;
+  if      (hh < 10) id = SPR_SLEEPING;   // pre-10am: dozing
+  else if (hh < 18) id = SPR_BUILDING;   // 10:00-18:00: working
+  else if (hh < 22) id = SPR_HAPPY;      // 18:00-22:00: clocking off
+  else              id = SPR_SLEEPING;   // 22:00+: asleep
+  blitScaledSprite(id, x, y, avatar);
+
+  // Endpoint labels + live % readout under the floor line.
+  u->setFont(u8g2_font_5x7_tf);
+  u->drawStr(line_l - 2, floor_y + 9, "0:00");
+  const char *end = "24:00";
+  int ew = u->getStrWidth(end);
+  u->drawStr(line_r - ew + 2, floor_y + 9, end);
+  char pc[12];
+  snprintf(pc, sizeof(pc), "day %d%%", day_pct);
+  u->setFont(u8g2_font_6x10_tf);
+  int pw = u->getStrWidth(pc);
+  u->drawStr((W - pw) / 2, floor_y + 10, pc);
 }
 
 // --- Velocity histogram ---
@@ -1237,8 +1294,34 @@ void drawSystemView() {
     y += row_h;
   };
 
-  snprintf(buf, sizeof(buf), "%.2f V   %d%%   chip ESP32-S3", g_state.battery_v, g_state.battery_pct);
+  // Battery: filtered voltage is what the rest of the firmware trusts
+  // (g_state.battery_v) — show raw alongside it so a load-sag spike or a
+  // bad ADC reading is visible on-device. ADC pin mV is included as a
+  // sanity check on the voltage divider (200K/100K -> ratio 3).
+  snprintf(buf, sizeof(buf),
+           "%.2fV ewma  raw %.2fV  SOC %d%%  adc %.0fmV",
+           g_state.battery_v, g_state.battery_v_raw,
+           g_state.battery_pct, g_state.battery_pin_mv);
   row("Battery", buf);
+
+  // Charge: heuristic flag + which condition triggered + the 60-s delta
+  // that the trending-up rule looks at. 'F' = near-full plateau,
+  // 'U' = trending up, '-' = none. The SOC is FROZEN while charging so
+  // the user sees what the gauge said just before charge began.
+  {
+    const char *cs = g_state.charging ? "yes" : "no";
+    const char *why = (g_state.charging_reason == 'J') ? "raw jump >60mV"
+                    : (g_state.charging_reason == 'F') ? "near-full >4.18V"
+                    : (g_state.charging_reason == 'U') ? "trending up"
+                    : (g_state.charging_reason == 'S') ? "sticky carry"
+                                                       : "-";
+    snprintf(buf, sizeof(buf),
+             "%s  reason %s  d60s %+.0fmV  n %lu",
+             cs, why,
+             g_state.battery_dv_60s * 1000.0f,
+             (unsigned long)g_state.battery_samples);
+    row("Charge", buf);
+  }
 
   if (!isnan(g_state.temp_c)) {
     snprintf(buf, sizeof(buf), "%.1f \xB0""C    Humidity %.0f%%   (SHTC3)",
@@ -1276,6 +1359,17 @@ void drawSystemView() {
   snprintf(buf, sizeof(buf), "%luh %02lum %02lus   turns %lu",
            up / 3600, (up / 60) % 60, up % 60, (unsigned long)g_state.turns_done);
   row("Uptime", buf);
+
+  // Power row -- aggregated power-relevant knobs so we can verify
+  // current-saving changes actually shipped. CPU should be 80 MHz idle,
+  // loop should achieve ~50 Hz with a 20 ms delay, BLE advertising
+  // 1000 ms when not connected.
+  snprintf(buf, sizeof(buf),
+           "cpu %u MHz  loop %lu Hz  BLE adv %u ms",
+           (unsigned)getCpuFrequencyMhz(),
+           (unsigned long)diag::loop_hz,
+           (unsigned)ble_nus::advertisingIntervalMs());
+  row("Power", buf);
 
   // IMU row -- raw accel + derived orientation. "face-down" matches the
   // nap-trigger condition in imu::loop.
@@ -1390,8 +1484,25 @@ void drawSystemView() {
 // gets seeded from the PCF85063 on boot and refreshed by BLE `{"time":...}`.
 // If neither source has fired, we show "--:--" and a "waiting for time sync"
 // hint instead of fabricating.
+// CLOCK view — redesigned as a glance-information dashboard rather than a
+// bare wall clock. Four stacked zones separated by thin rules:
+//
+//   A. Big HH:MM (centred) + weekday tag (top-left) + 60-tick seconds row
+//      that replaces the old blinking colon. The tick row shows elapsed
+//      vs remaining seconds in the current minute as a single horizontal
+//      timeline — gives the clock visual rhythm without flashing pixels.
+//   B. Full date heading + calendar metadata (weekday, week #, day-of-
+//      year). The old "Thu, Jan 15 2026" single line was information-
+//      starved — this layout reads like a calendar app's header.
+//   C. Three equal sensor cards (TEMP / HUMIDITY / BATTERY) using the
+//      SHTC3 + battery data the device already collects. Card frames
+//      are the structural element, not decoration.
+//   D. Day-progress bar + footer meta (TZ / sync age / source).
+//
+// The walking mascot strip that used to fill the bottom third was dropped
+// — it added no information and the new sensor cards are a better use of
+// that space on a CLOCK view.
 void drawClockView() {
-  // Resolve current local time (or absence thereof).
   bool have_time = (g_state.time_sync_ms != 0);
   uint32_t local_sec = 0;
   if (have_time) {
@@ -1401,126 +1512,203 @@ void drawClockView() {
   int hh = (local_sec / 3600) % 24;
   int mm = (local_sec / 60) % 60;
   int ss = (local_sec) % 60;
+  uint32_t day_sec = local_sec % 86400UL;
+  int day_pct = (int)((uint64_t)day_sec * 100UL / 86400UL);
 
-  // Compose HH:MM with a blinking colon — colon disappears on odd seconds.
-  // logisoso50 is a numerals-only font ("tn"), so the colon is drawn
-  // separately as a pair of small filled boxes.
-  char hh_buf[4], mm_buf[4];
-  if (have_time) {
-    snprintf(hh_buf, sizeof(hh_buf), "%02d", hh);
-    snprintf(mm_buf, sizeof(mm_buf), "%02d", mm);
-  } else {
-    strcpy(hh_buf, "--");
-    strcpy(mm_buf, "--");
+  if (!have_time) {
+    u->setFont(u8g2_font_helvB18_tf);
+    const char *t = "Waiting for time sync";
+    int tw = u->getStrWidth(t);
+    u->drawStr((W - tw) / 2, TOP_H + 120, t);
+    u->setFont(u8g2_font_6x13_tf);
+    const char *t2 = ble_nus::connected()
+      ? "Desktop will push current time shortly"
+      : "Open Hardware Buddy in Claude desktop";
+    int t2w = u->getStrWidth(t2);
+    u->drawStr((W - t2w) / 2, TOP_H + 144, t2);
+    return;
   }
+
+  // ---- Date math (shared between Zone A weekday tag and Zone B header) ----
+  static const char *DOW_SHORT[] = {"THU","FRI","SAT","SUN","MON","TUE","WED"};
+  static const char *DOW_LONG[]  = {"Thursday","Friday","Saturday","Sunday",
+                                    "Monday","Tuesday","Wednesday"};
+  static const char *MON_LONG[]  = {"January","February","March","April","May",
+                                    "June","July","August","September",
+                                    "October","November","December"};
+  static const uint8_t MD[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  auto isLeap = [](int y) {
+    return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+  };
+  uint32_t days_total = local_sec / 86400UL;
+  int dow = days_total % 7;   // 1970-01-01 was a Thursday
+  uint32_t days = days_total;
+  int year = 1970;
+  while (true) {
+    uint32_t yd = isLeap(year) ? 366 : 365;
+    if (days < yd) break;
+    days -= yd;
+    year++;
+  }
+  int year_days_total = isLeap(year) ? 366 : 365;
+  int day_of_year = (int)days + 1;
+  int mon = 1;
+  for (int m = 0; m < 12; m++) {
+    uint32_t dm = MD[m];
+    if (m == 1 && isLeap(year)) dm = 29;
+    if (days < dm) break;
+    days -= dm;
+    mon++;
+  }
+  int day = (int)days + 1;
+  int week = (day_of_year + 6) / 7;   // simple week number, not ISO 8601
+
+  // ============ Zone A: Big HH:MM:SS + weekday + seconds tick row ============
+  u->setFont(u8g2_font_helvB14_tf);
+  u->drawStr(20, TOP_H + 16, DOW_SHORT[dow]);
+
+  // Big HH:MM with :SS appended on the SAME baseline (smaller font) so it
+  // reads as one time, wristwatch-style — the whole HH:MM:SS block is
+  // centred together. logisoso fonts are numerals-only ("tn"), so the
+  // colon between HH and MM is drawn manually as two stacked filled boxes.
+  char hh_buf[4], mm_buf[4], ss_buf[6];
+  snprintf(hh_buf, sizeof(hh_buf), "%02d", hh);
+  snprintf(mm_buf, sizeof(mm_buf), "%02d", mm);
+  snprintf(ss_buf, sizeof(ss_buf), ":%02d", ss);
 
   u->setFont(u8g2_font_logisoso50_tn);
   int hh_w = u->getStrWidth(hh_buf);
   int mm_w = u->getStrWidth(mm_buf);
-  int colon_w = 16;
-  int gap = 8;
-  int total_w = hh_w + gap + colon_w + gap + mm_w;
-  int clock_x = (W - total_w) / 2;
-  int clock_y_baseline = TOP_H + 80;
+  u->setFont(u8g2_font_logisoso24_tn);
+  int ss_w = u->getStrWidth(ss_buf);
 
-  u->drawStr(clock_x, clock_y_baseline, hh_buf);
-  int colon_x = clock_x + hh_w + gap;
+  int colon_w = 14;
+  int gap     = 6;
+  int ss_gap  = 10;
+  int hm_w    = hh_w + gap + colon_w + gap + mm_w;   // width of HH:MM
+  int block_w = hm_w + ss_gap + ss_w;                // + the small :SS
+  int block_x = (W - block_w) / 2;
+  int big_y   = TOP_H + 62;                          // shared baseline
 
-  // Colon (two stacked filled squares). Blink off when seconds is odd
-  // OR when we have no real time (so the dashes don't look like a clock).
-  bool show_colon = have_time && (ss % 2 == 0);
-  if (show_colon) {
-    int sq = 8;
-    int colon_y1 = clock_y_baseline - 38;
-    int colon_y2 = clock_y_baseline - 14;
-    u->drawBox(colon_x + (colon_w - sq) / 2, colon_y1, sq, sq);
-    u->drawBox(colon_x + (colon_w - sq) / 2, colon_y2, sq, sq);
+  u->setFont(u8g2_font_logisoso50_tn);
+  u->drawStr(block_x, big_y, hh_buf);
+  int colon_x = block_x + hh_w + gap + (colon_w - 6) / 2;
+  u->drawBox(colon_x, big_y - 36, 6, 6);
+  u->drawBox(colon_x, big_y - 12, 6, 6);
+  u->drawStr(block_x + hh_w + gap + colon_w + gap, big_y, mm_buf);
+  // :SS — same baseline (big_y), so it sits flush at the bottom of the
+  // big digits like a subdial.
+  u->setFont(u8g2_font_logisoso24_tn);
+  u->drawStr(block_x + hm_w + ss_gap, big_y, ss_buf);
+
+  // Seconds tick row — 60 vertical ticks across the full content width.
+  // Past seconds = short ticks, current second = tall 3px cursor, future
+  // seconds = minimal stubs. The bottom rule of this row IS the Zone A /
+  // Zone B divider — we don't draw a second horizontal line right beneath
+  // it (two rules that close together read as a crowded smudge, which is
+  // what pushed the date heading up against the seconds line before).
+  int sep1_y;
+  {
+    int tr_x = 24, tr_y = big_y + 10;
+    int tr_w = W - 48;
+    int tr_h = 12;
+    sep1_y = tr_y + tr_h - 1;
+    u->drawHLine(tr_x, sep1_y, tr_w);
+    for (int s = 0; s < 60; s++) {
+      int tx = tr_x + (int)((int32_t)s * tr_w / 60);
+      if (s == ss)        u->drawBox(tx, tr_y + 1, 3, tr_h - 2);
+      else if (s < ss)    u->drawVLine(tx, tr_y + tr_h - 5, 4);
+      else                u->drawVLine(tx, tr_y + tr_h - 3, 2);
+    }
   }
 
-  u->drawStr(colon_x + colon_w + gap, clock_y_baseline, mm_buf);
+  // ============ Zone B: Date heading + calendar metadata ============
+  char date_buf[40];
+  snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
+           MON_LONG[mon - 1], day, year);
+  u->setFont(u8g2_font_helvB18_tf);
+  int date_y = sep1_y + 24;   // clear whitespace below the seconds line
+  u->drawStr(20, date_y, date_buf);
 
-  // Seconds — smaller, off to the right of the minute digits.
-  if (have_time) {
-    char ss_buf[6];
-    snprintf(ss_buf, sizeof(ss_buf), ":%02d", ss);
-    u->setFont(u8g2_font_logisoso18_tn);
-    int ss_w = u->getStrWidth(ss_buf);
-    int ss_x = clock_x + total_w + 4;
-    if (ss_x + ss_w > W - 8) ss_x = W - 8 - ss_w;   // avoid right edge
-    u->drawStr(ss_x, clock_y_baseline, ss_buf);
+  // Sub-row: weekday \xB7 week-of-year \xB7 day-of-year. \xB7 is the
+  // middle-dot in ISO 8859-1 — helvB14_tf / 6x13_tf both include it,
+  // so escape it explicitly rather than embedding a UTF-8 sequence
+  // (which u8g2's drawStr would render as two glyphs).
+  char meta_buf[80];
+  snprintf(meta_buf, sizeof(meta_buf),
+           "%s   \xB7   Week %02d   \xB7   Day %03d / %d",
+           DOW_LONG[dow], week, day_of_year, year_days_total);
+  u->setFont(u8g2_font_6x13_tf);
+  u->drawStr(20, date_y + 15, meta_buf);
+
+  // Zone B / Zone C separator.
+  int sep2_y = date_y + 23;
+  u->drawHLine(20, sep2_y, W - 40);
+
+  // ============ Zone C: Three sensor cards ============
+  int card_h = 40;
+  {
+    int cards_y  = sep2_y + 6;
+    int margin   = 20;
+    int gap_c    = 8;
+    int card_w   = (W - 2 * margin - 2 * gap_c) / 3;
+
+    auto drawCard = [&](int idx, const char *label, const char *value) {
+      int cx = margin + idx * (card_w + gap_c);
+      // Outer frame.
+      u->drawFrame(cx, cards_y, card_w, card_h);
+      // Inverted label strip (black band, white text) at top of card —
+      // gives the card a header reminiscent of a tab/dashboard widget.
+      u->drawBox(cx, cards_y, card_w, 12);
+      u->setDrawColor(0);
+      u->setFont(u8g2_font_6x10_tf);
+      int lw = u->getStrWidth(label);
+      u->drawStr(cx + (card_w - lw) / 2, cards_y + 9, label);
+      u->setDrawColor(1);
+      // Value centred in the ~28 px below the 12 px label band.
+      u->setFont(u8g2_font_helvB18_tf);
+      int vw = u->getStrWidth(value);
+      u->drawStr(cx + (card_w - vw) / 2, cards_y + 32, value);
+    };
+
+    char b1[16], b2[16], b3[16];
+    if (!isnan(g_state.temp_c))      snprintf(b1, sizeof(b1), "%.1f\xB0""C", g_state.temp_c);
+    else                              strcpy(b1, "--");
+    if (!isnan(g_state.humidity_pct)) snprintf(b2, sizeof(b2), "%.0f%%",      g_state.humidity_pct);
+    else                              strcpy(b2, "--");
+    if (g_state.battery_pct >= 0)     snprintf(b3, sizeof(b3), "%d%%%s",      g_state.battery_pct,
+                                                                              g_state.charging ? "+" : "");
+    else                              strcpy(b3, "--");
+
+    drawCard(0, "TEMP",     b1);
+    drawCard(1, "HUMIDITY", b2);
+    drawCard(2, "BATTERY",  b3);
   }
 
-  // Date + day-of-week below the clock. Compute from local_sec via the
-  // same days-since-epoch math the RTC driver uses.
-  if (have_time) {
-    static const char *DOW[] = {"Thu","Fri","Sat","Sun","Mon","Tue","Wed"};
-    static const uint8_t MD[] = {31,28,31,30,31,30,31,31,30,31,30,31};
-    auto isLeap = [](int y) {
-      return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
-    };
-    uint32_t days = local_sec / 86400;
-    int dow = days % 7;   // 1970-01-01 was a Thursday
-    int year = 1970;
-    while (true) {
-      uint32_t yd = isLeap(year) ? 366 : 365;
-      if (days < yd) break;
-      days -= yd;
-      year++;
-    }
-    int mon = 1;
-    for (int m = 0; m < 12; m++) {
-      uint32_t dm = MD[m];
-      if (m == 1 && isLeap(year)) dm = 29;
-      if (days < dm) break;
-      days -= dm;
-      mon++;
-    }
-    int day = days + 1;
+  // ============ Zone D: Day-progress mascot + footer meta ============
+  // The walking mascot doubles as the day-progress indicator: its x
+  // position = fraction of the local day elapsed (00:00 left .. 24:00
+  // right). Replaces a plain progress bar — decoration and information
+  // in one element.
+  int cards_bottom = sep2_y + 6 + card_h;
+  drawDayProgressMascot(cards_bottom + 4, day_pct, hh);
 
-    static const char *MON_NAMES[] = {
-      "Jan","Feb","Mar","Apr","May","Jun",
-      "Jul","Aug","Sep","Oct","Nov","Dec"
-    };
-    char date_buf[40];
-    snprintf(date_buf, sizeof(date_buf), "%s, %s %d %d",
-             DOW[dow], MON_NAMES[mon - 1], day, year);
-    u->setFont(u8g2_font_helvB18_tf);
-    int date_w = u->getStrWidth(date_buf);
-    u->drawStr((W - date_w) / 2, clock_y_baseline + 36, date_buf);
-
-    // Timezone tag + sync age, small subtle line under the date.
-    char meta[64];
+  // Footer meta: timezone \xB7 sync age \xB7 source.
+  {
     long tz_h = g_state.time_offset_sec / 3600;
     long tz_m = (labs(g_state.time_offset_sec) / 60) % 60;
     uint32_t sync_age = (millis() - g_state.time_sync_ms) / 1000;
     const char *src = rtc::hasValidTime() ? "RTC" : "BLE";
-    if (sync_age < 60)         snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %lus ago (%s)",   tz_h, tz_m, (unsigned long)sync_age, src);
-    else if (sync_age < 3600)  snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %lum ago (%s)",   tz_h, tz_m, (unsigned long)(sync_age/60), src);
-    else                       snprintf(meta, sizeof(meta), "UTC%+ld:%02ld   sync %luh ago (%s)",   tz_h, tz_m, (unsigned long)(sync_age/3600), src);
+    char foot[80];
+    const char *unit; unsigned long n;
+    if      (sync_age < 60)   { unit = "s"; n = sync_age; }
+    else if (sync_age < 3600) { unit = "m"; n = sync_age / 60; }
+    else                      { unit = "h"; n = sync_age / 3600; }
+    snprintf(foot, sizeof(foot),
+             "UTC%+ld:%02ld   \xB7   synced %lu%s ago via %s",
+             tz_h, tz_m, n, unit, src);
     u->setFont(u8g2_font_6x10_tf);
-    int meta_w = u->getStrWidth(meta);
-    u->drawStr((W - meta_w) / 2, clock_y_baseline + 60, meta);
-  } else {
-    // No time available — explain why instead of showing a fake date.
-    u->setFont(u8g2_font_helvB14_tf);
-    const char *t = "waiting for time sync";
-    int tw = u->getStrWidth(t);
-    u->drawStr((W - tw) / 2, clock_y_baseline + 36, t);
-    u->setFont(u8g2_font_6x10_tf);
-    const char *t2 = ble_nus::connected()
-      ? "desktop will push current time shortly"
-      : "connect Hardware Buddy in Claude desktop";
-    int t2w = u->getStrWidth(t2);
-    u->drawStr((W - t2w) / 2, clock_y_baseline + 56, t2);
-  }
-
-  // Walking mascot strip across the bottom for visual life — Clock view is
-  // otherwise very sparse, the strip fills the lower third without competing
-  // with the numerals.
-  int strip_top = clock_y_baseline + 76;
-  int strip_h = H - BOT_H - 4 - strip_top;
-  if (strip_h > 30) {
-    drawWalkingMascot(strip_top, strip_h);
+    u->drawStr(20, H - BOT_H - 6, foot);
   }
 }
 
