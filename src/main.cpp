@@ -31,7 +31,12 @@ static ST7305_U8g2 lcd(11, 12, 5, 40, 41);
 // frame; a KEY press wakes via ext1 and the device reboots (~2 s) and
 // reloads stats from NVS + time from the RTC chip. Set to 0 to disable
 // (keep the device always-on as a desk clock even when disconnected).
-constexpr uint32_t IDLE_DEEP_SLEEP_MS = 30UL * 60 * 1000;   // 30 min
+// 0 = disabled. Was 30 min, but idle deep sleep is temporarily off while we
+// confirm button behaviour — deep sleep can only be woken by KEY (ext1), so
+// a slept device looks like "buttons don't work" (BOOT does nothing, KEY
+// reboots). Reintroduce once verified, ideally with KEY+BOOT both as wake
+// sources and a longer / connection-aware trigger.
+constexpr uint32_t IDLE_DEEP_SLEEP_MS = 0;
 constexpr int PIN_KEY_WAKE = 18;                            // KEY button, RTC-capable
 
 static uint32_t g_last_button_ms = 0;
@@ -107,20 +112,19 @@ void setup() {
     LOGI("[pm] woke from deep sleep (KEY press)\n");
   }
 
-  // Try to enable automatic light sleep (dynamic-freq scaling + tickless
-  // idle, coordinated with the BLE controller so the link survives). Stock
-  // Arduino-ESP32 builds often ship with CONFIG_PM_ENABLE off, in which
-  // case esp_pm_configure() returns ESP_ERR_NOT_SUPPORTED and we just keep
-  // the fixed 80 MHz. Logged either way so we know which path we got.
+  // NOTE: automatic light sleep (esp_pm_configure light_sleep_enable=true)
+  // was disabled — it can interfere with the polled-GPIO button input on
+  // this build (buttons stopped switching views). We keep a plain fixed
+  // 80 MHz (set above) which is the bulk of the idle-current saving anyway.
+  // If reintroduced, gate buttons on a GPIO interrupt wake source first.
   {
     esp_pm_config_esp32s3_t pm = {};
     pm.max_freq_mhz = 80;
-    pm.min_freq_mhz = 40;
-    pm.light_sleep_enable = true;
+    pm.min_freq_mhz = 80;            // no DFS downscale
+    pm.light_sleep_enable = false;   // <-- was true; disabled
     esp_err_t rc = esp_pm_configure(&pm);
-    LOGI("[pm] esp_pm_configure -> %s (auto light-sleep %s)\n",
-         esp_err_to_name(rc),
-         rc == ESP_OK ? "ON" : "unavailable, fixed 80MHz");
+    LOGI("[pm] esp_pm_configure -> %s (light-sleep OFF, fixed 80MHz)\n",
+         esp_err_to_name(rc));
   }
 
   lcd.begin(0, U8G2_R1);
