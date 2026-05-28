@@ -1516,26 +1516,21 @@ void drawClockView() {
   int day_pct = (int)((uint64_t)day_sec * 100UL / 86400UL);
 
   if (!have_time) {
-    u->setFont(u8g2_font_helvB18_tf);
-    const char *t = "Waiting for time sync";
-    int tw = u->getStrWidth(t);
-    u->drawStr((W - tw) / 2, TOP_H + 120, t);
-    u->setFont(u8g2_font_6x13_tf);
+    u->setFont(u8g2_font_wqy14_t_gb2312);
+    const char *t = "等待时间同步";
+    int tw = u->getUTF8Width(t);
+    u->drawUTF8((W - tw) / 2, TOP_H + 120, t);
     const char *t2 = ble_nus::connected()
-      ? "Desktop will push current time shortly"
-      : "Open Hardware Buddy in Claude desktop";
-    int t2w = u->getStrWidth(t2);
-    u->drawStr((W - t2w) / 2, TOP_H + 144, t2);
+      ? "桌面端将很快推送当前时间"
+      : "请在 Claude 桌面端打开 Hardware Buddy 并连接";
+    int t2w = u->getUTF8Width(t2);
+    u->drawUTF8((W - t2w) / 2, TOP_H + 146, t2);
     return;
   }
 
-  // ---- Date math (shared between Zone A weekday tag and Zone B header) ----
-  static const char *DOW_SHORT[] = {"THU","FRI","SAT","SUN","MON","TUE","WED"};
-  static const char *DOW_LONG[]  = {"Thursday","Friday","Saturday","Sunday",
-                                    "Monday","Tuesday","Wednesday"};
-  static const char *MON_LONG[]  = {"January","February","March","April","May",
-                                    "June","July","August","September",
-                                    "October","November","December"};
+  // ---- Date math ---- (weekday index order starts Thursday: 1970-01-01)
+  static const char *DOW_CN[] = {"星期四", "星期五", "星期六", "星期日",
+                                 "星期一", "星期二", "星期三"};
   static const uint8_t MD[] = {31,28,31,30,31,30,31,31,30,31,30,31};
   auto isLeap = [](int y) {
     return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
@@ -1564,8 +1559,8 @@ void drawClockView() {
   int week = (day_of_year + 6) / 7;   // simple week number, not ISO 8601
 
   // ============ Zone A: Big HH:MM:SS + weekday + seconds tick row ============
-  u->setFont(u8g2_font_helvB14_tf);
-  u->drawStr(20, TOP_H + 16, DOW_SHORT[dow]);
+  u->setFont(u8g2_font_wqy14_t_gb2312);
+  u->drawUTF8(20, TOP_H + 16, DOW_CN[dow]);
 
   // Big HH:MM with :SS appended on the SAME baseline (smaller font) so it
   // reads as one time, wristwatch-style — the whole HH:MM:SS block is
@@ -1622,27 +1617,22 @@ void drawClockView() {
     }
   }
 
-  // ============ Zone B: Date heading + calendar metadata ============
-  char date_buf[40];
-  snprintf(date_buf, sizeof(date_buf), "%s %d, %d",
-           MON_LONG[mon - 1], day, year);
-  u->setFont(u8g2_font_helvB18_tf);
-  int date_y = sep1_y + 24;   // clear whitespace below the seconds line
-  u->drawStr(20, date_y, date_buf);
+  // ============ Zone B: Date heading + calendar metadata (Chinese) ============
+  // wqy14 is the only Chinese font included; it also carries ASCII/digits, so
+  // a whole "YYYY年M月D日" line renders with one drawUTF8 call.
+  u->setFont(u8g2_font_wqy14_t_gb2312);
+  char date_buf[48];
+  snprintf(date_buf, sizeof(date_buf), "%d年%d月%d日", year, mon, day);
+  int date_y = sep1_y + 22;
+  u->drawUTF8(20, date_y, date_buf);
 
-  // Sub-row: weekday \xB7 week-of-year \xB7 day-of-year. \xB7 is the
-  // middle-dot in ISO 8859-1 — helvB14_tf / 6x13_tf both include it,
-  // so escape it explicitly rather than embedding a UTF-8 sequence
-  // (which u8g2's drawStr would render as two glyphs).
-  char meta_buf[80];
-  snprintf(meta_buf, sizeof(meta_buf),
-           "%s   \xB7   Week %02d   \xB7   Day %03d / %d",
-           DOW_LONG[dow], week, day_of_year, year_days_total);
-  u->setFont(u8g2_font_6x13_tf);
-  u->drawStr(20, date_y + 15, meta_buf);
+  char meta_buf[64];
+  snprintf(meta_buf, sizeof(meta_buf), "第 %d 周      全年第 %d / %d 天",
+           week, day_of_year, year_days_total);
+  u->drawUTF8(20, date_y + 18, meta_buf);
 
   // Zone B / Zone C separator.
-  int sep2_y = date_y + 23;
+  int sep2_y = date_y + 26;
   u->drawHLine(20, sep2_y, W - 40);
 
   // ============ Zone C: Three sensor cards ============
@@ -1653,22 +1643,21 @@ void drawClockView() {
     int gap_c    = 8;
     int card_w   = (W - 2 * margin - 2 * gap_c) / 3;
 
+    // label is Chinese (drawUTF8/wqy14, white-on-black band); value is
+    // numeric (helvB18). Band is 15 px to fit the 14 px Chinese glyphs.
     auto drawCard = [&](int idx, const char *label, const char *value) {
       int cx = margin + idx * (card_w + gap_c);
-      // Outer frame.
       u->drawFrame(cx, cards_y, card_w, card_h);
-      // Inverted label strip (black band, white text) at top of card —
-      // gives the card a header reminiscent of a tab/dashboard widget.
-      u->drawBox(cx, cards_y, card_w, 12);
+      u->drawBox(cx, cards_y, card_w, 15);
       u->setDrawColor(0);
-      u->setFont(u8g2_font_6x10_tf);
-      int lw = u->getStrWidth(label);
-      u->drawStr(cx + (card_w - lw) / 2, cards_y + 9, label);
+      u->setFont(u8g2_font_wqy14_t_gb2312);
+      int lw = u->getUTF8Width(label);
+      u->drawUTF8(cx + (card_w - lw) / 2, cards_y + 12, label);
       u->setDrawColor(1);
-      // Value centred in the ~28 px below the 12 px label band.
+      // Value centred in the ~25 px below the 15 px label band.
       u->setFont(u8g2_font_helvB18_tf);
       int vw = u->getStrWidth(value);
-      u->drawStr(cx + (card_w - vw) / 2, cards_y + 32, value);
+      u->drawStr(cx + (card_w - vw) / 2, cards_y + 33, value);
     };
 
     char b1[16], b2[16], b3[16];
@@ -1680,9 +1669,9 @@ void drawClockView() {
                                                                               g_state.charging ? "+" : "");
     else                              strcpy(b3, "--");
 
-    drawCard(0, "TEMP",     b1);
-    drawCard(1, "HUMIDITY", b2);
-    drawCard(2, "BATTERY",  b3);
+    drawCard(0, "温度", b1);
+    drawCard(1, "湿度", b2);
+    drawCard(2, "电量", b3);
   }
 
   // ============ Zone D: Day-progress mascot + footer meta ============
