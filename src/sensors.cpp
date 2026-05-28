@@ -1,6 +1,7 @@
 #include "sensors.h"
 #include "state.h"
 #include "battery_math.h"
+#include "log.h"
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -8,6 +9,19 @@
 // vol = adc_voltage * 3.
 //
 // SHTC3 temp/humidity: I2C addr 0x70 on SDA=13, SCL=14.
+
+// Temperature calibration offset (°C), added to the raw SHTC3 reading. The
+// SHTC3 shares the PCB with the ESP32-S3, ST7305 and PMIC, so it reads the
+// *board* temperature — typically a few °C above ambient (self-heating; the
+// SHTC3's own measurement self-heating is <0.1 °C, the neighbours are the
+// cause). The raw reading is verified-correct (datasheet formula + CRC); this
+// is a placement-bias correction, not a bug fix. Measure against a reference
+// thermometer and set e.g. -DTEMP_OFFSET_C=-4.0 in platformio.ini. Default 0
+// = show the raw sensor value. The [shtc3] debug log prints raw + corrected
+// so you can find your offset.
+#ifndef TEMP_OFFSET_C
+#define TEMP_OFFSET_C 0.0f
+#endif
 
 namespace {
 constexpr int PIN_BAT = 4;
@@ -103,12 +117,17 @@ void sensors::loop() {
   g_state.charging_reason = est.reason;
   g_state.battery_dv_60s  = est.dv60;
 
-  // SHTC3
+  // SHTC3 temp/humidity. The raw reading is the (CRC-checked, datasheet-
+  // formula) board temperature; TEMP_OFFSET_C corrects for self-heating so
+  // the displayed value tracks ambient. Log raw + corrected so the offset
+  // can be calibrated against a reference thermometer.
   if (shtc3_present) {
     float t, h;
     if (shtc3_read(&t, &h)) {
-      g_state.temp_c = t;
+      g_state.temp_c = t + (float)TEMP_OFFSET_C;
       g_state.humidity_pct = h;
+      LOGD("[shtc3] raw %.2fC -> shown %.2fC (offset %+.1f)  RH %.1f%%\n",
+           t, g_state.temp_c, (float)TEMP_OFFSET_C, h);
     }
   }
 }

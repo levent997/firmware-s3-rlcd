@@ -72,7 +72,15 @@ MCP 云控制、LVGL。
 
 ### 阶段 4 — 长期(大重构,收益待定)
 
-- ⏸ **4.1 板级抽象** — 统一 M5StickC(claude-desktop-buddy)与 S3 两套固件到一个 Board 基类
+- 🔬 **4.1 板级抽象** — **已评估,不建议做**:
+  - xiaozhi 能支持 70+ 板,是因为它是**一个 app**(语音助手)套可换 HAL,板间应用逻辑一致
+  - 这里两套固件是**不同产品/UX**,且栈完全不同:claude-desktop-buddy = **Bluedroid**(`<BLEDevice.h>`)+ M5.Lcd/`TFT_eSprite`(彩色 135×240)+ ASCII species;firmware-s3-rlcd = **NimBLE** + U8g2(单色 300×400)+ 像素 sprites。还在**两个独立 git 仓库**
+  - 统一 = 抽象两套 BLE 栈 + 两套显示库 + 两套美术系统,跨两仓合并 —— 工程量巨大,而共享面只有"协议消费 + tamagotchi 统计"这一小块
+  - **建议**:维持独立(CLAUDE.md 本意如此)。若将来真要跨固件复用,**只共享纯逻辑**(本仓已抽出的 `battery_math` / `token_window` 这种 Arduino-free 模块,可经 git submodule 共享),而非做板级抽象大重构
+
+### 其他改进(非阶段项)
+
+- ✅ **温度自加热校准** — SHTC3 与 MCU/LCD 同板,读数偏高数 °C。新增编译期 `TEMP_OFFSET_C`(默认 0)加到原始读数;`[shtc3]` debug 日志打印 raw + 校正值便于对照参考温度计标定。原始读数本身经 datasheet 公式 + CRC 验证无误,这是布局偏置修正
 
 ---
 
@@ -88,3 +96,4 @@ MCP 云控制、LVGL。
 | 2026-05-28 | (本次) | 阶段 2.1 补完:抽 token_window,protocol 委托,加 5 个 token 单测。native 共 12/12 通过,固件已烧录 |
 | 2026-05-28 | (本次) | 阶段 3.1:新增 settings.h 通用 NVS 封装,persist.cpp 重构(键名不变)。编译/测试通过,固件已烧录 |
 | 2026-05-28 | (本次) | 阶段 3.2 评估:BLE OTA 可行(2×2MB 重分区保 LittleFS/NVS),但传输实现是需决策的 mini-project。3.3 中文按用户要求跳过 |
+| 2026-05-28 | (本次) | 温度自加热校准(TEMP_OFFSET_C + [shtc3] 日志);已烧录。阶段 4.1 评估:两套固件 BLE/显示/美术栈全不同 + 分属两仓,不建议板级抽象 |
