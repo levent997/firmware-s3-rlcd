@@ -62,7 +62,7 @@ MCP 云控制、LVGL。
 
 ### 阶段 3 — 架构改进(可选)
 
-- ⬜ **3.1 通用 Settings 封装** — persist.cpp 重构成 key-value 封装
+- ✅ **3.1 通用 Settings 封装** — 新增 `src/settings.h`(纯头文件):RAII + 类型化 `getUInt/putBool/...` + 命名空间,每实例自带 `Preferences` 句柄。`persist.cpp` 重构为走它,去掉 6 处 begin/end 样板,Serial 改 LOG。**NVS 键名与命名空间("buddy")完全不变 → 老设备持久化数据照常加载**;native 12/12 回归通过
 - ⏸ **3.2 BLE OTA** — NimBLE DFU 推固件(需评估桌面端依赖,受 CLAUDE.md "不要求桌面端加字段"约束)
 - ⬜ **3.3 中文字体** — U8g2 unifont_t_chinese 子集,温湿度/日期/菜单中文化
 
@@ -82,3 +82,4 @@ MCP 云控制、LVGL。
 | 2026-05-28 | (本次) | 阶段 2.1:抽取 battery_math + BatteryEstimator,加 native env + 7 个 Unity 单测(全过)。固件重构后编译通过、已烧录 |
 | 2026-05-28 | (本次) | 阶段 2.2 + 2.3:GitHub Actions CI(build+test 硬门 / clang-format advisory)+ .clang-format;软件看门狗(core0,30s)。测试通过、固件已烧录 |
 | 2026-05-28 | (本次) | 阶段 2.1 补完:抽 token_window,protocol 委托,加 5 个 token 单测。native 共 12/12 通过,固件已烧录 |
+| 2026-05-28 | (本次) | 阶段 3.1:新增 settings.h 通用 NVS 封装,persist.cpp 重构(键名不变)。编译/测试通过,固件已烧录 |
