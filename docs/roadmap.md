@@ -63,8 +63,12 @@ MCP 云控制、LVGL。
 ### 阶段 3 — 架构改进(可选)
 
 - ✅ **3.1 通用 Settings 封装** — 新增 `src/settings.h`(纯头文件):RAII + 类型化 `getUInt/putBool/...` + 命名空间,每实例自带 `Preferences` 句柄。`persist.cpp` 重构为走它,去掉 6 处 begin/end 样板,Serial 改 LOG。**NVS 键名与命名空间("buddy")完全不变 → 老设备持久化数据照常加载**;native 12/12 回归通过
-- ⏸ **3.2 BLE OTA** — NimBLE DFU 推固件(需评估桌面端依赖,受 CLAUDE.md "不要求桌面端加字段"约束)
-- ⬜ **3.3 中文字体** — U8g2 unifont_t_chinese 子集,温湿度/日期/菜单中文化
+- 🔬 **3.2 BLE OTA** — **已评估,待决策**:
+  - 当前分区只有单 app 槽(`ota_0` 4MB)+ LittleFS 11.875MB。固件仅 ~985KB
+  - **可行的低风险重分区**:把 4MB 槽拆成 2×2MB(`ota_0` 0x10000 / `ota_1` 0x210000),`spiffs` 偏移 0x410000 与大小 0xBE0000 **保持不变** → LittleFS 与 NVS 数据都不丢
+  - 但传输实现是真项目:BLE OTA 服务(`esp_ota_*` 写备用槽 + 校验 + 回滚)+ 配套上传工具(独立 bleak 脚本/手机 App,不碰 Claude 桌面协议,不违反 CLAUDE.md)+ 1MB 走 NUS 需数分钟 + 失败只能 USB 恢复
+  - **建议**:maker 设备 USB 烧录已够用,OTA 边际收益需用户判断;是一个需专门投入 + 充分测试的 mini-project,不做"自动盲推"
+- ⏭️ **3.3 中文字体** — 用户要求**先跳过**。(U8g2 unifont_t_chinese 子集,温湿度/日期/菜单中文化,+~150KB flash)
 
 ### 阶段 4 — 长期(大重构,收益待定)
 
@@ -83,3 +87,4 @@ MCP 云控制、LVGL。
 | 2026-05-28 | (本次) | 阶段 2.2 + 2.3:GitHub Actions CI(build+test 硬门 / clang-format advisory)+ .clang-format;软件看门狗(core0,30s)。测试通过、固件已烧录 |
 | 2026-05-28 | (本次) | 阶段 2.1 补完:抽 token_window,protocol 委托,加 5 个 token 单测。native 共 12/12 通过,固件已烧录 |
 | 2026-05-28 | (本次) | 阶段 3.1:新增 settings.h 通用 NVS 封装,persist.cpp 重构(键名不变)。编译/测试通过,固件已烧录 |
+| 2026-05-28 | (本次) | 阶段 3.2 评估:BLE OTA 可行(2×2MB 重分区保 LittleFS/NVS),但传输实现是需决策的 mini-project。3.3 中文按用户要求跳过 |
